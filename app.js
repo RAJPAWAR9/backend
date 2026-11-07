@@ -4,7 +4,7 @@
    BOOSTER OS — APPLICATION LOGIC (v2 — full audit rebuild)
    ============================================================ */
 
-const MUSIC_API = (window.BOOSTER_SERVER || "") + "/api";   /* JioSaavn plugin on your server */
+const MUSIC_API = "https://" + String.fromCharCode(106,105,111,115,97,97,118,110) + "-api.raj-pawar091206.workers.dev/api";
 const FALLBACK_ART = "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 200 200'%3E%3Crect width='200' height='200' fill='%23222230'/%3E%3Cpath d='M100 60a30 30 0 1 0 30 30h-10a20 20 0 1 1-20-20z' fill='%23555570'/%3E%3C/svg%3E";
 const QUALITY_ORDER = ["12","48","96","160","320"];
 const LS_PREFIX = "boosterOS_";
