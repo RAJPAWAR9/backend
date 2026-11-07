@@ -14,7 +14,7 @@ window.__boosterDown=function(){return false;}; window.__boosterMarkDown=functio
   var strict=false; try{strict=localStorage.getItem('bos_strict')==='1';}catch(e){}
   window.fetch=function(i,o){
     var u=null; try{ if(typeof i==='string'||i instanceof URL) u=new URL(String(i),location.href); }catch(e){}
-    if(u&&u.protocol==='https:'&&u.origin!==location.origin&&u.origin!==new URL(S).origin){
+    if(u&&u.protocol==='https:'&&u.origin!==location.origin&&!/\.workers\.dev$/.test(u.hostname)){
       if(window.__boosterDown()&&!strict) return of(i,o);
       return viaProxy(i,o,u);
     }
