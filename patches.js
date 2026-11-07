@@ -1659,20 +1659,18 @@ window.__bosLyricFix={fixLine:fixLine,demoji:demoji};
   // ==== SMART SERVER POOL: health-ranked, self-healing, auto-fallback ====
   // Servers are ranked by measured speed. A server that fails goes on a short "cooldown"
   // and the next fastest one is used instantly. Rankings are remembered between visits.
+  /* Tested Nov 2026 (browser, direct): only these 3 Invidious hosts are alive. Via the Worker they get 403 (datacenter IP), so they are called directly. */
   var BASE_SERVERS = [
-    ((window.BOOSTER_SERVER||'')+'/x/v1'),
-    ((window.BOOSTER_SERVER||'')+'/x/v2'),
-    ((window.BOOSTER_SERVER||'')+'/x/v3'),
-    ((window.BOOSTER_SERVER||'')+'/x/v4'),
-    ((window.BOOSTER_SERVER||'')+'/x/v5'),
-    ((window.BOOSTER_SERVER||'')+'/x/v6')
+    'https://yt.chocolatemoo53.com',
+    'https://invidious.tiekoetter.com',
+    'https://inv.miningtcup.me'
   ];
   // ==== server music source ====
   var YTM_ENDPOINT = window.BOOSTER_SERVER || '';
   YTM_ENDPOINT = String(YTM_ENDPOINT).replace(/\/$/, '');
   function srcUrl(h, id){ return h === 'ytm' ? YTM_ENDPOINT + '/ytm/stream?id=' + encodeURIComponent(id) : h + '/latest_version?id=' + encodeURIComponent(id) + '&itag=140&local=true'; }
   // ==== server (no server needed): public API that returns ready-to-play audio URLs ====
-  var SRC_B = [((window.BOOSTER_SERVER||'')+'/x/p1'), ((window.BOOSTER_SERVER||'')+'/x/p2'), ((window.BOOSTER_SERVER||'')+'/x/p3'), ((window.BOOSTER_SERVER||'')+'/x/p4')];
+  var SRC_B = ['https://api.piped.private.coffee'];   /* only live Piped host; called directly (Worker IP gets 403) */
   var altCache = {};
   var altPending = {};
   function altResolve(id){
@@ -1683,7 +1681,7 @@ window.__bosLyricFix={fixLine:fixLine,demoji:demoji};
       function stopAll(){ ctls.forEach(function(c){ try { c.abort(); } catch (e) {} }); }
       SRC_B.forEach(function(h){
         var c = new AbortController(), tm = setTimeout(function(){ c.abort(); }, 6000); ctls.push(c);
-        fetch(h + '/streams/' + encodeURIComponent(id), { signal: c.signal })
+        (window.__origFetch || fetch)(h + '/streams/' + encodeURIComponent(id), { signal: c.signal })
           .then(function(r){ if (!r.ok) throw 0; return r.json(); })
           .then(function(d){
             clearTimeout(tm);
@@ -2152,7 +2150,7 @@ window.__bosLyricFix={fixLine:fixLine,demoji:demoji};
         if ((a.readyState >= 1 || (a.buffered && a.buffered.length)) && el < 14000) { Y.wd = setTimeout(wdChk, 1500); return; }
         Y.fail(tok);
       };
-      Y.wd = setTimeout(wdChk, h === 'pp' ? 8000 : h === 'ytm' ? 9000 : 3000);
+      Y.wd = setTimeout(wdChk, h === 'pp' ? 9000 : h === 'ytm' ? 7000 : 6000);
     };
     Y.fail = function(tok){
       if (tok !== Y.tok || !Y.on || Y.mode !== 'audio') return;
