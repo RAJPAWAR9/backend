@@ -63,6 +63,7 @@ function svgChevronR(){return '<svg viewBox="0 0 24 24" fill="none" stroke="curr
 /* ============================================================ API ============================================================ */
 const cache = new Map();
 async function apiFetch(url, cacheKey, ttlMs, signal){
+  if(window.__bosFlags&&window.__bosFlags.saavn===false)throw new Error("JioSaavn is switched off");
   ttlMs=ttlMs||5*60*1000; const key=cacheKey||url; const hit=cache.get(key);
   if(hit&&(Date.now()-hit.t<ttlMs))return hit.data;
   let res;
