@@ -1,5 +1,4 @@
-/* BOOSTER boot: points the player at YOUR server. Everything else (music API, YouTube, lyrics, proxy) lives on the server.
-   Change server once without editing files:  localStorage.setItem('bos_server','https://your-worker.workers.dev')  */
+/* BOOSTER boot: points the player at the server. Everything else lives on the server. */
 window.BOOSTER_SERVER=(function(){var s='';try{s=localStorage.getItem('bos_server')||''}catch(e){}return(s||'https://boostersever.raj-pawar091206.workers.dev').replace(/\/$/,'')})();
 window.__boosterDown=function(){return false;}; window.__boosterMarkDown=function(){};
 (function(){
@@ -17,7 +16,7 @@ window.__boosterDown=function(){return false;}; window.__boosterMarkDown=functio
   var strict=false; try{strict=localStorage.getItem('bos_strict')==='1';}catch(e){}
   window.fetch=function(i,o){
     var u=null; try{ if(typeof i==='string'||i instanceof URL) u=new URL(String(i),location.href); }catch(e){}
-    if(u&&u.protocol==='https:'&&u.origin!==location.origin&&!/\.workers\.dev$/.test(u.hostname)){
+    if(u&&u.protocol==='https:'&&u.origin!==location.origin&&u.origin!==S&&!/\.workers\.dev$/.test(u.hostname)){
       if(window.__boosterDown()&&!strict) return of(i,o);
       return viaProxy(i,o,u);
     }
