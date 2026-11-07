@@ -4,7 +4,7 @@
    BOOSTER OS — APPLICATION LOGIC (v2 — full audit rebuild)
    ============================================================ */
 
-const MUSIC_API = "https://" + String.fromCharCode(106,105,111,115,97,97,118,110) + "-api.raj-pawar091206.workers.dev/api";
+const MUSIC_API = (window.BOOSTER_SERVER||"") + "/api";
 const FALLBACK_ART = "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 200 200'%3E%3Crect width='200' height='200' fill='%23222230'/%3E%3Cpath d='M100 60a30 30 0 1 0 30 30h-10a20 20 0 1 1-20-20z' fill='%23555570'/%3E%3C/svg%3E";
 const QUALITY_ORDER = ["12","48","96","160","320"];
 const LS_PREFIX = "boosterOS_";
@@ -63,7 +63,7 @@ function svgChevronR(){return '<svg viewBox="0 0 24 24" fill="none" stroke="curr
 /* ============================================================ API ============================================================ */
 const cache = new Map();
 async function apiFetch(url, cacheKey, ttlMs, signal){
-  if(window.__bosFlags&&window.__bosFlags.saavn===false)throw new Error("JioSaavn is switched off");
+  if(window.__bosFlags&&window.__bosFlags.saavn===false)throw new Error("Music service is switched off");
   ttlMs=ttlMs||5*60*1000; const key=cacheKey||url; const hit=cache.get(key);
   if(hit&&(Date.now()-hit.t<ttlMs))return hit.data;
   let res;
@@ -1028,8 +1028,8 @@ async function lyJSON(url,signal,ms,retry){
   }
   return null;
 }
-/* CORS-proxy race: for sources that block browsers (or ISPs that block lrclib.net) — first proxy that answers wins */
-const LY_PROXIES=[u=>"https://corsproxy.io/?url="+encodeURIComponent(u),u=>"https://api.allorigins.win/raw?url="+encodeURIComponent(u),u=>"https://api.codetabs.com/v1/proxy?quest="+encodeURIComponent(u)];
+/* retry helper (all lyric sources are fetched through the BOOSTER server) */
+const LY_PROXIES=[u=>u];
 function lyProxyJSON(url,signal,ms){
   return new Promise((resolve,reject)=>{
     let left=LY_PROXIES.length, done=false;
@@ -1084,10 +1084,10 @@ function lyBuild(h,info,source,sc){
   }
   return null;
 }
-const LRCLIB_BASE="https://lrclib.net/api";
+const LY_B1=((window.BOOSTER_SERVER||"")+"/x/l1/api");
 
-/* 0) Lyricsify automatic title+artist matcher.
-   Lyricsify exposes a JSON search endpoint that returns HTML search results;
+/* 0) server automatic title+artist matcher.
+   server exposes a JSON search endpoint that returns HTML search results;
    the selected result page contains the synced LRC in its _details block.
    We only fetch the exact matched track at runtime — no catalog is embedded. */
 async function lyText(url,signal,ms){
@@ -1100,7 +1100,7 @@ async function lyText(url,signal,ms){
 function lyHtmlDecode(s){
   const el=document.createElement("textarea"); el.innerHTML=String(s||""); return el.value;
 }
-function lyLyricsifySearchRows(payload){
+function lyS3SearchRows(payload){
   const html=lyHtmlDecode(payload&&typeof payload.html==="string"?payload.html:"");
   if(!html) return [];
   const rows=[];
@@ -1108,15 +1108,15 @@ function lyLyricsifySearchRows(payload){
   while((m=re.exec(html))){
     const url=String(m[1]||"").replace(/\\/g,"");
     const text=m[2].replace(/<[^>]+>/g," ").replace(/\s+/g," ").trim();
-    if(!/lyricsify\.com/i.test(url) || !text) continue;
-    const clean=url.startsWith("http")?url:("https://www.lyricsify.com"+(url.startsWith("/")?url:"/"+url));
+    if(!/^https?:\/\//i.test(url) || !text) continue;
+    const clean=(window.BOOSTER_SERVER||"")+"/x/l2"+url.replace(/^https?:\/\/[^\/]+/i,"");
     const title=text.replace(/\s+-\s+[^-]+$/," ").trim();
     rows.push({url:clean,text,title});
     if(rows.length>=12) break;
   }
   return rows;
 }
-function lyLyricsifyLRCFromHtml(html){
+function lyS3LRCFromHtml(html){
   const src=String(html||"");
   let block=src.match(/_details[\s\S]*?<\/div>/i);
   let raw=block?block[0]:src;
@@ -1125,12 +1125,12 @@ function lyLyricsifyLRCFromHtml(html){
   const lrc=raw.split("\n").map(x=>x.trim()).filter(Boolean).filter(x=>/^\s*\[[0-9]{1,3}:[0-9]{2}(?:[.:][0-9]{1,3})?\]/.test(x)).join("\n");
   return lrc;
 }
-async function lyLyricsify(info,sig){
+async function lyS3(info,sig){
   const title=info.titles[0], artist=info.artists[0]; if(!title||!artist) return [];
   const q=encodeURIComponent(artist+" "+title);
-  const payload=await lyJSON("https://api.lyricsify.com/search?q="+q,sig,6500);
+  const payload=await lyJSON(((window.BOOSTER_SERVER||"")+"/x/l3/search?q=")+q,sig,6500);
   if(!payload) return [];
-  const rows=lyLyricsifySearchRows(payload);
+  const rows=lyS3SearchRows(payload);
   const ranked=rows.map(r=>{
     const text=r.text||"", ts=Math.max(0,...info.titles.map(t=>lyricsSimilarity(t,text))), as=Math.max(0,...info.artists.map(a=>lyricsSimilarity(a,text)));
     return {...r,score:ts*.72+as*.28};
@@ -1138,18 +1138,18 @@ async function lyLyricsify(info,sig){
   for(const r of ranked.slice(0,4)){
     if(r.score<.55) continue;
     const page=await lyText(r.url,sig,7000);
-    const lrc=lyLyricsifyLRCFromHtml(page);
+    const lrc=lyS3LRCFromHtml(page);
     if(!lrc) continue;
     const lines=parseLRC(lrc);
     if(lines.length<2) continue;
-    return [{synced:true,estimated:false,wordSynced:lines.some(l=>l.real),source:"LYRICSIFY",lines,s:r.score,rank:r.score+.72+(lines.some(l=>l.real)?.1:0)}];
+    return [{synced:true,estimated:false,wordSynced:lines.some(l=>l.real),source:"B3",lines,s:r.score,rank:r.score+.72+(lines.some(l=>l.real)?.1:0)}];
   }
   return [];
 }
-/* 1) LRCLIB cached exact lookup — fastest automatic synced-lyrics path */
+/* 1) server cached exact lookup — fastest automatic synced-lyrics path */
 async function lyLRCCached(info,sig){
   const t=info.titles[0], a=info.artists[0]; if(!t||!a) return [];
-  const base=LRCLIB_BASE+"/get-cached?track_name="+encodeURIComponent(t)+"&artist_name="+encodeURIComponent(a);
+  const base=LY_B1+"/get-cached?track_name="+encodeURIComponent(t)+"&artist_name="+encodeURIComponent(a);
   const urls=[];
   if(info.album) urls.push(base+"&album_name="+encodeURIComponent(info.album)+(info.dur?"&duration="+info.dur:""));
   urls.push(base+(info.dur?"&duration="+info.dur:""));
@@ -1157,21 +1157,21 @@ async function lyLRCCached(info,sig){
     const h=await lyJSON(u,sig,6500);
     if(!h) continue;
     const sc=lyScore(h,info);
-    const c=lyBuild(h,info,"LRCLIB-CACHED",sc.s);
+    const c=lyBuild(h,info,"B1",sc.s);
     if(c&&c.synced&&sc.ts>=.72&&(sc.df<=8||!sc.df)) return [c];
   }
   return [];
 }
-/* 1) LRCLIB exact lookup (title + artist + album + duration) */
+/* 1) server exact lookup (title + artist + album + duration) */
 async function lyLRCGet(info,sig){
   const t=info.titles[0], a=info.artists[0]; if(!t||!a) return [];
   const b="track_name="+encodeURIComponent(t)+"&artist_name="+encodeURIComponent(a), urls=[];
-  if(info.dur){ urls.push(LRCLIB_BASE+"/get?"+b+(info.album?"&album_name="+encodeURIComponent(info.album):"")+"&duration="+info.dur); urls.push(LRCLIB_BASE+"/get?"+b+"&duration="+info.dur); }
-  urls.push(LRCLIB_BASE+"/get?"+b);
+  if(info.dur){ urls.push(LY_B1+"/get?"+b+(info.album?"&album_name="+encodeURIComponent(info.album):"")+"&duration="+info.dur); urls.push(LY_B1+"/get?"+b+"&duration="+info.dur); }
+  urls.push(LY_B1+"/get?"+b);
   const rs=await Promise.all(urls.map(u=>lyJSON(u,sig,7000,true)));
-  return rs.filter(Boolean).map(h=>{ const sc=lyScore(h,info); return sc.ts>=.6?lyBuild(h,info,"LRCLIB",sc.s):null; });
+  return rs.filter(Boolean).map(h=>{ const sc=lyScore(h,info); return sc.ts>=.6?lyBuild(h,info,"B1",sc.s):null; });
 }
-/* 0) BOOSTER server lyrics (/lyrics): one request, the server asks LRCLIB for you */
+/* 0) BOOSTER server lyrics (/lyrics): one request, the server asks server for you */
 async function lyBooster(info,sig){
   const S=window.BOOSTER_LY_SERVER; if(!S||window.__boosterDown()) return [];
   const t=info.titles[0], a=info.artists[0]||""; if(!t) return [];
@@ -1185,7 +1185,7 @@ async function lyBooster(info,sig){
   }
   return out;
 }
-/* 2) LRCLIB fuzzy search — several title/artist variants in parallel, best scored hit wins */
+/* 2) server fuzzy search — several title/artist variants in parallel, best scored hit wins */
 async function lyLRCSearch(info,sig){
   const qs=[], a=info.artists[0]||"";
   info.titles.slice(0,3).forEach(tt=>{ if(a) qs.push("q="+encodeURIComponent(tt+" "+a)); qs.push("track_name="+encodeURIComponent(tt)+(a?"&artist_name="+encodeURIComponent(a):"")); });
@@ -1193,35 +1193,35 @@ async function lyLRCSearch(info,sig){
   qs.push("q="+encodeURIComponent(info.titles[0]));
   qs.push("track_name="+encodeURIComponent(info.titles[0]));
   const list=[...new Set(qs)].slice(0,7);
-  let rs=await Promise.all(list.map(q=>lyJSON(LRCLIB_BASE+"/search?"+q,sig,7000,true)));
-  if(!rs.some(Array.isArray)) rs=await Promise.all(list.slice(0,3).map(q=>lyProxyJSON(LRCLIB_BASE+"/search?"+q,sig,8000)));   /* lrclib.net unreachable (ISP block / outage) -> go through proxies */
+  let rs=await Promise.all(list.map(q=>lyJSON(LY_B1+"/search?"+q,sig,7000,true)));
+  if(!rs.some(Array.isArray)) rs=await Promise.all(list.slice(0,3).map(q=>lyProxyJSON(LY_B1+"/search?"+q,sig,8000)));
   const out=[], yt=!!(info.track&&info.track.source==="youtube");
   for(const arr of rs) if(Array.isArray(arr)) for(const h of arr.slice(0,20)){
     const sc=lyScore(h,info);
-    if(sc.ts>=.6&&(sc.s>=.7||(sc.ts>=.88&&(sc.df<=10||yt)))){ const c=lyBuild(h,info,"LRCLIB",sc.s); if(c) out.push(c); }
+    if(sc.ts>=.6&&(sc.s>=.7||(sc.ts>=.88&&(sc.df<=10||yt)))){ const c=lyBuild(h,info,"B1",sc.s); if(c) out.push(c); }
   }
   return out;
 }
-/* 3) Karalyr (timed lyrics, word timing when the track has it) */
-async function lyKaralyr(info,sig){
+/* 3) server (timed lyrics, word timing when the track has it) */
+async function lyS4(info,sig){
   const t=info.titles[0], a=info.artists[0]; if(!t||!a||info.dur<1) return [];
-  const j=await lyJSON("https://www.karalyr.com/api/get?artist_name="+encodeURIComponent(a)+"&track_name="+encodeURIComponent(t)+"&duration="+info.dur+(info.album?"&album_name="+encodeURIComponent(info.album):""),sig);
-  return j?[lyBuild(j,info,"KARALYR",.9)]:[];
+  const j=await lyJSON(((window.BOOSTER_SERVER||"")+"/x/l4/api/get?artist_name=")+encodeURIComponent(a)+"&track_name="+encodeURIComponent(t)+"&duration="+info.dur+(info.album?"&album_name="+encodeURIComponent(info.album):""),sig);
+  return j?[lyBuild(j,info,"B4",.9)]:[];
 }
-/* 4) Textyl (timed lyrics, mostly English / Hinglish pop) */
-async function lyTextyl(info,sig){
+/* 4) server (timed lyrics, mostly English / Hinglish pop) */
+async function lyS5(info,sig){
   const t=info.titles[0]; if(!t) return [];
-  const j=await lyJSON("https://api.textyl.co/api/lyrics?q="+encodeURIComponent(((info.artists[0]||"")+" "+t).trim()),sig);
+  const j=await lyJSON(((window.BOOSTER_SERVER||"")+"/x/l5/api/lyrics?q=")+encodeURIComponent(((info.artists[0]||"")+" "+t).trim()),sig);
   if(!Array.isArray(j)||j.length<4) return [];
   const lines=j.map(x=>({time:Number(x.seconds)||0,text:String(x.lyrics||"").trim()})).filter(x=>x.text).sort((a,b)=>a.time-b.time);
   if(lines.length<4||(info.dur&&lines[lines.length-1].time>info.dur+8)) return [];
-  return [{synced:true,estimated:false,wordSynced:false,source:"TEXTYL",lines,s:.66,rank:1.04}];
+  return [{synced:true,estimated:false,wordSynced:false,source:"B5",lines,s:.66,rank:1.04}];
 }
-/* 5) NetEase Cloud Music (huge synced catalogue incl. Hindi / Punjabi / Marathi) — via CORS proxy */
-async function lyNetEase(info,sig){
+/* 5) server (huge synced catalogue incl. Hindi / Punjabi / Marathi) — via CORS proxy */
+async function lyS6(info,sig){
   const t=info.titles[0]; if(!t) return [];
   const q=((info.artists[0]||"")+" "+t).trim();
-  const sj=await lyProxyJSON("https://music.163.com/api/search/get/web?csrf_token=&hlpretag=&hlposttag=&s="+encodeURIComponent(q)+"&type=1&offset=0&total=true&limit=8",sig,8000);
+  const sj=await lyProxyJSON(((window.BOOSTER_SERVER||"")+"/x/l6/api/search/get/web?csrf_token=&hlpretag=&hlposttag=&s=")+encodeURIComponent(q)+"&type=1&offset=0&total=true&limit=8",sig,8000);
   const songs=sj&&sj.result&&sj.result.songs; if(!Array.isArray(songs)) return [];
   const yt=!!(info.track&&info.track.source==="youtube");
   const ranked=songs.map(x=>{
@@ -1229,22 +1229,22 @@ async function lyNetEase(info,sig){
     return {id:x.id,h,sc:lyScore(h,info)};
   }).filter(r=>r.sc.ts>=.6&&(r.sc.df<=6||!info.dur||!r.h.duration||yt)).sort((a,b)=>b.sc.s-a.sc.s);
   for(const r of ranked.slice(0,2)){
-    const lj=await lyProxyJSON("https://music.163.com/api/song/lyric?id="+r.id+"&lv=1&kv=1&tv=-1",sig,8000);
+    const lj=await lyProxyJSON(((window.BOOSTER_SERVER||"")+"/x/l6/api/song/lyric?id=")+r.id+"&lv=1&kv=1&tv=-1",sig,8000);
     const raw=lj&&lj.lrc&&lj.lrc.lyric; if(!raw) continue;
     const lrc=String(raw).split(/\r?\n/).filter(l=>!/^\[\d+:\d+(?:[.:]\d+)?\]\s*(?:作词|作曲|编曲|制作人?|词|曲|混音|录音|母带|Lyrics|Composer|Producer)\s*[:：]/i.test(l)).join("\n");
     const lines=parseLRC(lrc);
-    if(lines.length>=4) return [{synced:true,estimated:false,wordSynced:false,source:"NETEASE",lines,s:r.sc.s,rank:r.sc.s+.45}];
+    if(lines.length>=4) return [{synced:true,estimated:false,wordSynced:false,source:"B6",lines,s:r.sc.s,rank:r.sc.s+.45}];
   }
   return [];
 }
 /* Last resort: plain lyrics, auto-timed to the song */
-async function lyOVH(info,sig){
+async function lyS7(info,sig){
   const pairs=[]; info.titles.slice(0,2).forEach(t=>info.artists.slice(0,2).forEach(a=>pairs.push([a,t])));
-  const rs=await Promise.all(pairs.map(p=>lyJSON("https://api.lyrics.ovh/v1/"+encodeURIComponent(p[0])+"/"+encodeURIComponent(p[1]),sig,9000)));
+  const rs=await Promise.all(pairs.map(p=>lyJSON(((window.BOOSTER_SERVER||"")+"/x/l7/v1/")+encodeURIComponent(p[0])+"/"+encodeURIComponent(p[1]),sig,9000)));
   for(const j of rs){
     if(!j||!j.lyrics) continue;
     const lines=lyPlainLines(j.lyrics);
-    if(lines.length>=4) return {synced:false,estimated:false,wordSynced:false,source:"LYRICS.OVH",lines,s:.6,rank:.6};
+    if(lines.length>=4) return {synced:false,estimated:false,wordSynced:false,source:"B7",lines,s:.6,rank:.6};
   }
   return null;
 }
@@ -1252,7 +1252,7 @@ async function lyOVH(info,sig){
    1) song has plain lyrics  -> word timings from YouTube captions are aligned onto the plain lyrics
    2) song has no lyrics     -> the captions themselves become the lyrics (marked "auto-generated")
    Needs your own tiny server: deploy yt-captions-worker.js on Cloudflare Workers and paste its URL below. Empty = feature off. */
-const YT_CC_ENDPOINT = window.BOOSTER_SERVER || "";   /* e.g. "https://yt-cc.yourname.workers.dev" */
+const YT_CC_ENDPOINT = window.BOOSTER_SERVER || "";
 const YT_LANG={hindi:"hi",punjabi:"pa",tamil:"ta",telugu:"te",marathi:"mr",gujarati:"gu",bengali:"bn",kannada:"kn",malayalam:"ml",english:"en",bhojpuri:"hi",haryanvi:"hi",rajasthani:"hi",urdu:"ur"};
 async function lyYTFetch(info,sig){
   if(!YT_CC_ENDPOINT) return null;
@@ -1328,18 +1328,18 @@ function lyCCToLines(cc){
   }
   flush(); return out;
 }
-/* WORKER lyrics (priority 3, after LRCLIB): YouTube captions via your Worker (/yt/lyrics) -> timed lines */
+/* WORKER lyrics (priority 3, after server): YouTube captions via your Worker (/yt/lyrics) -> timed lines */
 async function lyWorkerLyrics(info,sig){
   const cc=await lyYTFetch(info,sig); if(!cc) return null;
   const ls=lyCCToLines(cc); if(ls.length<4) return null;
   return {synced:true,estimated:false,wordSynced:ls.some(l=>l.real),generated:true,source:"WORKER",lines:ls,s:.9,rank:2};
 }
-const LYRICS_PROVIDERS=[lyLyricsify,lyLRCCached,lyLRCGet,lyLRCSearch,lyKaralyr,lyTextyl,lyNetEase];
-const LYRICS_FALLBACKS=[lyOVH];
+const LYRICS_PROVIDERS=[lyS3,lyLRCCached,lyLRCGet,lyLRCSearch,lyS4,lyS5,lyS6];
+const LYRICS_FALLBACKS=[lyS7];
 async function fetchLyricsExpanded(track,signal){
   const info=lyInfo(track); let best=null;
   const consider=c=>{ if(c&&c.lines&&c.lines.length&&(!best||c.rank>best.rank)) best=c; };
-  /* PRIORITY: 1) LRCLIB first  2) if it gives no synced lyrics -> all the other providers together */
+  /* lyric source */
   const runGroup=(list,capMs)=>new Promise((resolve,reject)=>{
     let left=list.length, fin=false, timer=0, cap=0;
     const end=()=>{ if(!fin){ fin=true; clearTimeout(timer); clearTimeout(cap); resolve(); } };
@@ -1352,7 +1352,7 @@ async function fetchLyricsExpanded(track,signal){
         .finally(()=>{ if(--left<=0) end(); });
     });
   });
-  /* PRIORITY: LRCLIB (2.5) first, then Worker (3), then the rest; the Worker request starts in parallel so it is ready if LRCLIB has nothing */
+  /* lyric source */
   let wp=null;
   if(YT_CC_ENDPOINT){ wp=Promise.race([lyWorkerLyrics(info,signal),new Promise(r=>setTimeout(()=>r(null),8000))]); wp.catch(()=>{}); }
   await runGroup([lyBooster,lyLRCCached,lyLRCGet,lyLRCSearch],4500);
@@ -1360,7 +1360,7 @@ async function fetchLyricsExpanded(track,signal){
     let wr=null; try{ wr=await wp; }catch(e){ if(e&&e.name==="AbortError") throw e; }
     if(wr) best=wr;
   }
-  if(!best||!best.synced||best.estimated) await runGroup([lyLyricsify,lyKaralyr,lyTextyl,lyNetEase],9000);
+  if(!best||!best.synced||best.estimated) await runGroup([lyS3,lyS4,lyS5,lyS6],9000);
   if(!best){ for(const f of LYRICS_FALLBACKS){ consider(await f(info,signal)); if(best) break; } }
   /* YouTube captions: sync plain lyrics word-by-word, or generate lyrics when nothing was found */
   if((!best||best.synced===false)&&YT_CC_ENDPOINT){
@@ -1643,7 +1643,7 @@ function ytLyricTracks(track){
     if(last) add(head,last);
     add(head,ch); add(head,"");
   }
-  /* clean title / artist / album from MusicBrainz, TheAudioDB or iTunes (auto-meta) goes first */
+  /* clean title / artist / album (auto-meta) goes first */
   try{
     const mc=JSON.parse(localStorage.getItem("bos_meta_v3")||"{}"), nm=String(track.name||"");
     const m=mc["y|"+nm+"|"+(track.artistName||"")]||mc["y|"+nm+"|"+(track.artistName||"")+" - Topic"];
@@ -1830,7 +1830,7 @@ function lyricsOpenManual(){
 }
 function lyricsSourcePill(){
   const c=currentLyrics; if(!c) return "";
-  const tag=(c.source||"").replace("-ESTIMATED","")+(c.generated?" · auto-generated from captions":"")+(c.wordSynced?" · word-synced":c.estimated?" · auto-timed (approx)":c.synced===false?" · plain":" · line-synced");
+  const tag="BOOSTER"+(c.generated?" · auto-generated from captions":"")+(c.wordSynced?" · word-synced":c.estimated?" · auto-timed (approx)":c.synced===false?" · plain":" · line-synced");
   return '<div style="text-align:center;font-size:11px;opacity:.45;padding:28px 0 8px;letter-spacing:.04em">Lyrics: '+escapeHTML(tag)+' · <span style="text-decoration:underline;cursor:pointer" onclick="lyricsOpenManual()">wrong lyrics? add yours</span></div>';
 }
 function renderLyricsPane(){
@@ -2049,7 +2049,7 @@ function renderSearchView(){
     tabsEl.querySelectorAll(".stab").forEach(x=>x.classList.toggle("active",x===b));
     if(State.searchQuery) runSearch(); else renderSearchEmpty();
   });
-  /* source switch: JioSaavn results and YouTube results live on separate tabs */
+  /* source switch: server results and YouTube results live on separate tabs */
   const srcEl=$("#search-src"), ytabsEl=$("#search-ytabs");
   srcEl.addEventListener("pointerdown", e=>{ if(e.target.closest(".stab") && document.activeElement===input){ e.preventDefault(); } });
   srcEl.addEventListener("click", e=>{
@@ -2096,8 +2096,8 @@ async function bosSongs(q){ try{ if(window.BosIT){ const r=await window.BosIT.se
 function ytAbs(u,h){ u=String(u||""); if(!u) return ""; if(u.indexOf("//")===0) return "https:"+u; if(u.charAt(0)==="/") return (h||"")+u; return u; }
 function ytArt(x){
   if(x.type==="channel"){ const t=x.authorThumbnails||[]; const p=t.find(a=>a.width>=150)||t[t.length-1]; return p?ytAbs(p.url,x._host):""; }
-  if(x.type==="playlist"){ const v=x.videos&&x.videos[0]; if(v&&v.videoId) return "https://i.ytimg.com/vi/"+v.videoId+"/mqdefault.jpg"; return ytAbs(x.playlistThumbnail,x._host); }
-  return "https://i.ytimg.com/vi/"+x.videoId+"/mqdefault.jpg";
+  if(x.type==="playlist"){ const v=x.videos&&x.videos[0]; if(v&&v.videoId) return ((window.BOOSTER_SERVER||"")+"/x/yi/vi/")+v.videoId+"/mqdefault.jpg"; return ytAbs(x.playlistThumbnail,x._host); }
+  return ((window.BOOSTER_SERVER||"")+"/x/yi/vi/")+x.videoId+"/mqdefault.jpg";
 }
 function ytFmtNum(n){ n=+n||0; return n>=1e6?(n/1e6).toFixed(1).replace(/\.0$/,"")+"M":n>=1e3?(n/1e3).toFixed(1).replace(/\.0$/,"")+"K":String(n); }
 function ytCardsHTML(list,kind){
@@ -2111,7 +2111,7 @@ function ytCardsHTML(list,kind){
   }).join("");
 }
 function ytRowsHTML(list){
-  return '<div class="row-list">'+list.map((v,i)=>'<button type="button" class="yt-res" '+(v.it?'data-bos-meta="1" ':'')+'data-yi="'+i+'" style="display:flex;gap:12px;align-items:center;width:100%;text-align:left;padding:8px;margin:0 0 8px;border-radius:12px;border:1px solid rgba(255,255,255,.08);background:rgba(255,255,255,.04);color:inherit;font:inherit;cursor:pointer"><img src="'+(v.it?esc(v.art):'https://i.ytimg.com/vi/'+esc(v.videoId)+'/mqdefault.jpg')+'" alt="" loading="lazy" onerror="this.src=\''+FALLBACK_ART+'\'" style="width:56px;height:56px;object-fit:cover;border-radius:10px;flex:none;background:#222"><div style="min-width:0"><b style="display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;font-weight:600">'+esc(v.title)+'</b><small style="opacity:.6">'+esc(v.author||"")+'</small></div><span role="button" tabindex="0" class="ctrl-btn song-more" data-bosmenu="yt" data-yi="'+i+'" aria-label="More options" style="margin-left:auto;flex:none">'+svgMore()+'</span></button>').join("")+'</div>';
+  return '<div class="row-list">'+list.map((v,i)=>'<button type="button" class="yt-res" '+(v.it?'data-bos-meta="1" ':'')+'data-yi="'+i+'" style="display:flex;gap:12px;align-items:center;width:100%;text-align:left;padding:8px;margin:0 0 8px;border-radius:12px;border:1px solid rgba(255,255,255,.08);background:rgba(255,255,255,.04);color:inherit;font:inherit;cursor:pointer"><img src="'+(v.it?esc(v.art):((window.BOOSTER_SERVER||'')+'/x/yi/vi/')+esc(v.videoId)+'/mqdefault.jpg')+'" alt="" loading="lazy" onerror="this.src=\''+FALLBACK_ART+'\'" style="width:56px;height:56px;object-fit:cover;border-radius:10px;flex:none;background:#222"><div style="min-width:0"><b style="display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;font-weight:600">'+esc(v.title)+'</b><small style="opacity:.6">'+esc(v.author||"")+'</small></div><span role="button" tabindex="0" class="ctrl-btn song-more" data-bosmenu="yt" data-yi="'+i+'" aria-label="More options" style="margin-left:auto;flex:none">'+svgMore()+'</span></button>').join("")+'</div>';
 }
 async function openYtCollection(c){
   if(!c||!window.BosYT) return;
@@ -2123,7 +2123,7 @@ async function openYtCollection(c){
   try{
     if(c.kind==="itAlbum") vids=await window.BosIT.albumTracks(c.id);
     else if(c.kind==="itArtist") vids=await window.BosIT.artistSongs(c.id);
-    else if(c.kind==="mplaylist"){ try{ vids=await bosPipedTry(()=>window.BosYT.musicPlaylistSongs(c.id),4000); }catch(_){} if(!vids||!vids.length) vids=await window.BosYT.collection("playlist",c.id); }
+    else if(c.kind==="mplaylist"){ try{ vids=await bosAltTry(()=>window.BosYT.musicPlaylistSongs(c.id),4000); }catch(_){} if(!vids||!vids.length) vids=await window.BosYT.collection("playlist",c.id); }
     else vids=await window.BosYT.collection(c.kind,c.id);
   }catch(_){}
   if(seq!==State._searchSeq) return;
@@ -2132,12 +2132,12 @@ async function openYtCollection(c){
   res.innerHTML=head+'<button class="btn btn-primary" id="yt-playall" style="margin-top:12px">'+svgPlay()+' Play All</button></div></div>'+ytRowsHTML(State._ytRes);
 }
 /* BOOSTMUSIC: YouTube Music songs only (official audio / topic uploads), no server needed */
-function bosPipedDown(){ return Date.now()<(window.__pdUntil||0); }
-function bosPipedTry(p,ms){ if(bosPipedDown()) return Promise.reject(0); return Promise.race([Promise.resolve().then(p),new Promise((_,j)=>setTimeout(()=>j(0),ms||3500))]).catch(e=>{ window.__pdUntil=Date.now()+6e5; throw e; }); }
-async function bosMusicSongs(q){ try{ if(window.BosIT){ const r=await window.BosIT.search(q,25); if(r&&r.length) return r; } }catch(_){} let l=[]; try{ if(window.BosYT&&window.BosYT.musicSearch) l=(await bosPipedTry(()=>window.BosYT.musicSearch(q)))||[]; }catch(_){} if(l.length) return l; return bosSongs(q); }
+function bosAltDown(){ return Date.now()<(window.__pdUntil||0); }
+function bosAltTry(p,ms){ if(bosAltDown()) return Promise.reject(0); return Promise.race([Promise.resolve().then(p),new Promise((_,j)=>setTimeout(()=>j(0),ms||3500))]).catch(e=>{ window.__pdUntil=Date.now()+6e5; throw e; }); }
+async function bosMusicSongs(q){ try{ if(window.BosIT){ const r=await window.BosIT.search(q,25); if(r&&r.length) return r; } }catch(_){} let l=[]; try{ if(window.BosYT&&window.BosYT.musicSearch) l=(await bosAltTry(()=>window.BosYT.musicSearch(q)))||[]; }catch(_){} if(l.length) return l; return bosSongs(q); }
 async function bosItAlbums(q){ try{ return window.BosIT&&window.BosIT.albums?await window.BosIT.albums(q,24):[]; }catch(_){ return []; } }
 async function bosItArtists(q){ try{ return window.BosIT&&window.BosIT.artists?await window.BosIT.artists(q,24):[]; }catch(_){ return []; } }
-async function bosMusicPlaylists(q){ let l=[]; try{ if(window.BosYT&&window.BosYT.musicPlaylists) l=(await bosPipedTry(()=>window.BosYT.musicPlaylists(q)))||[]; }catch(_){} if(l.length) return {list:l,kind:"mplaylist"}; return {list:await bosYtFetch(q,"playlist"),kind:"playlist"}; }
+async function bosMusicPlaylists(q){ let l=[]; try{ if(window.BosYT&&window.BosYT.musicPlaylists) l=(await bosAltTry(()=>window.BosYT.musicPlaylists(q)))||[]; }catch(_){} if(l.length) return {list:l,kind:"mplaylist"}; return {list:await bosYtFetch(q,"playlist"),kind:"playlist"}; }
 function itCardsHTML(list,kind){
   State._ytCards=State._ytCards||{};
   return list.map(x=>{
@@ -2328,7 +2328,7 @@ function renderSettings(){
   + group("About", [
       rowStatic("Application","Booster OS"), rowStatic("Version","2.0 MAX"), rowStatic("Design by","Raj Pawar"),
       rowStatic("Music data","Booster music service"),
-      rowStatic("Lyrics data","LRCLIB · Karalyr · Textyl · Lyrics.ovh (multi-source)")
+      rowStatic("Lyrics data","BOOSTER server (multi-source)")
     ]);
 }
 function group(title, rows){ return '<div class="settings-group"><div class="settings-group-title">'+esc(title)+'</div><div class="settings-card glass-1">'+rows.join("")+'</div></div>'; }
@@ -4494,7 +4494,7 @@ function ytTrackFrom(v){
   var vid=v.videoId||'', it=!!v.it;
   return {id:vid?'yt_'+vid:'',videoId:vid,name:v.title||'Untitled',
     artistName:it?(v.artist||''):String(v.author||'').replace(/\s*-\s*Topic$/i,'').replace(/VEVO$/i,'').trim(),
-    albumName:v.album||'',image:it?(v.art||''):(vid?'https://i.ytimg.com/vi/'+vid+'/hqdefault.jpg':''),
+    albumName:v.album||'',image:it?(v.art||''):(vid?((window.BOOSTER_SERVER||'')+'/x/yi/vi/')+vid+'/hqdefault.jpg':''),
     duration:it?(+v.dur||0):(+v.lengthSeconds||0),source:'youtube'};
 }
 async function getTrack(ctx){
@@ -4504,7 +4504,7 @@ async function getTrack(ctx){
       var v=ctx.v, r=null;
       try{ if(window.BosIT&&BosIT.ytFor) r=await BosIT.ytFor(v); }catch(e){}
       if(!r||!r.videoId){ tst('Could not find this song on YouTube','error'); return null; }
-      t.videoId=r.videoId; t.id='yt_'+r.videoId; if(!t.image) t.image='https://i.ytimg.com/vi/'+r.videoId+'/hqdefault.jpg';
+      t.videoId=r.videoId; t.id='yt_'+r.videoId; if(!t.image) t.image=((window.BOOSTER_SERVER||'')+'/x/yi/vi/')+r.videoId+'/hqdefault.jpg';
       if(!t.duration) t.duration=+r.lengthSeconds||0; ctx.v.videoId=r.videoId;
     }
     return t;
@@ -4615,8 +4615,8 @@ async function act(a){
 }
 function linkOf(c){
   var t=c.track;
-  if(c.kind==='yt') return 'https://www.youtube.com/watch?v='+encodeURIComponent(t.videoId||'');
-  return t.url||('https://www.jiosaavn.com/search/'+encodeURIComponent((t.name||'')+' '+(t.artistName||'')));
+  if(c.kind==='yt') return (window.BOOSTER_SERVER||'')+'/go/y?v='+encodeURIComponent(t.videoId||'');
+  return t.url||((window.BOOSTER_SERVER||'')+'/go/s?q='+encodeURIComponent((t.name||'')+' '+(t.artistName||'')));
 }
 /* ---------- replace the track everywhere (queue, favorites, history, playlists, lists on screen) ---------- */
 function replaceEverywhere(oldT,nt,opts){
@@ -4685,7 +4685,7 @@ async function download(c){
     }
     return nxt();
   }
-  if(!yt){   /* JioSaavn: unchanged, one by one (first URL almost always works) */
+  if(!yt){   /* server: unchanged, one by one (first URL almost always works) */
     var ac0=new AbortController();
     for(var i=0;i<cands.length;i++){
       try{ var u=await cands[i](); if(!u) continue; var r0=await getBlob(u,ac0.signal); save(r0.b,r0.url); return; }catch(e){}
@@ -4693,7 +4693,7 @@ async function download(c){
     try{ var u0=await cands[0](); if(u0){ window.open(u0,'_blank','noopener'); tst('Opened the direct file - save it from the browser'); return; } }catch(e){}
     tst('Download failed. Try again in a moment','error'); return;
   }
-  /* 0) same song on the BOOSTER (JioSaavn) server: fast, free, no key. strict=true -> only a close match (same length / same title) */
+  /* 0) same song on the BOOSTER (server) server: fast, free, no key. strict=true -> only a close match (same length / same title) */
   async function jioTry(strict){
     try{
       tst('Finding this song on the BOOSTER server…');
@@ -4746,7 +4746,7 @@ async function download(c){
   });
   if(won){ try{ localStorage.setItem('bos_dl_win',new URL(won.url).origin); }catch(e){} }
   if(won){ save(won.b,won.url); return; }
-  if(await jioTry(false)) return;   /* last chance: loose match on JioSaavn */
+  if(await jioTry(false)) return;   /* last chance: loose match on server */
   if(firstUrl){ window.open(firstUrl,'_blank','noopener'); tst('Opened the direct file - save it from the browser'); return; }
   tst('Download failed. Try again in a moment','error');
 }
