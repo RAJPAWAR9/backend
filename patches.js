@@ -1777,11 +1777,12 @@ window.__bosLyricFix={fixLine:fixLine,demoji:demoji};
 
   var warmed = {};
   function warm(){
-    ranked().slice(0, 2).forEach(function(h){
+    ranked().slice(0, 3).forEach(function(h){
       if (warmed[h]) return; warmed[h] = 1;
       ['dns-prefetch', 'preconnect'].forEach(function(rel){ var l = document.createElement('link'); l.rel = rel; l.href = h; document.head.append(l); });
     });
-  }
+  }  try { warm(); } catch (e) {}
+
 
   // light health check: measures real response time of every server
   function ping(h){
@@ -2079,11 +2080,46 @@ window.__bosLyricFix={fixLine:fixLine,demoji:demoji};
       if (Y.au) { try { Y.au.pause(); } catch (e) {} Y.au.onloadedmetadata = null; Y.au.onplaying = null; Y.au.removeAttribute('src'); try { Y.au.load(); } catch (e) {} }
     }
     // start a song: fastest server first; if it errors or stalls, the next server is tried automatically
+    // ---------- RACE: Worker + the live hosts start together, the first one that answers plays (no waiting for failures) ----------
+    function raceHosts(id, ms){
+      return new Promise(function(ok){
+        var cand = [];
+        if (YTM_ENDPOINT && !window.__boosterDown()) cand.push('ytm');
+        ranked().filter(function(x){ return !isCool(x); }).slice(0, 3).forEach(function(x){ cand.push(x); });
+        if (!cand.length) return ok(null);
+        var els = [], done = false, left = cand.length, tm = 0;
+        function finish(w){
+          if (done) return; done = true; clearTimeout(tm);
+          els.forEach(function(r){ if (w && r === w) return; try { r.a.pause(); r.a.removeAttribute('src'); r.a.load(); if (r.a.remove) r.a.remove(); } catch (e) {} });
+          ok(w || null);
+        }
+        tm = setTimeout(function(){ finish(null); }, ms);
+        cand.forEach(function(h){
+          var a = mkAudio(); a.id = 'yt-audio-race'; a.preload = 'auto'; a.volume = 0;
+          var r = { id: id, a: a, host: h, bad: false }; els.push(r);
+          a.addEventListener('loadedmetadata', function(){ finish(r); });
+          a.addEventListener('error', function(){
+            if (h === 'ytm') { try { window.__boosterMarkDown(); } catch (e) {} } else markBad(h);
+            r.bad = true; if (--left <= 0) finish(null);
+          });
+          a.src = srcUrl(h, id); try { a.load(); } catch (e) {}
+        });
+      });
+    }
+    Y.raceTok = 0;
     Y.start = function(id, start){
       if (Y.pre && Y.pre.id !== id) killPre();
       Y.id = id; Y.tried = []; Y.base = start || 0; Y.playing = true; Y.mode = 'audio';
       if (Y.fr) Y.fr.src = 'about:blank';
-      setLoading(true); Y.next(); icons();
+      setLoading(true);
+      var sid = ++Y.raceTok;
+      if (Y.base > 1 || (Y.pre && Y.pre.id === id && !Y.pre.bad)) { Y.next(); icons(); return; }   // resuming mid-song / already pre-buffered: old path
+      raceHosts(id, 6000).then(function(w){
+        if (sid !== Y.raceTok || Y.id !== id || !Y.on || !Y.playing) { if (w) { try { w.a.pause(); w.a.removeAttribute('src'); w.a.load(); if (w.a.remove) w.a.remove(); } catch (e) {} } return; }   // user skipped meanwhile
+        if (w) { killPre(); Y.pre = w; }
+        Y.next();
+      });
+      icons();
     };
     Y.next = function(){
       var tok = ++Y.tok;
