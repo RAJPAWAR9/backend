@@ -1680,7 +1680,7 @@ window.__bosLyricFix={fixLine:fixLine,demoji:demoji};
       var over = false, fails = 0, ctls = [];
       function stopAll(){ ctls.forEach(function(c){ try { c.abort(); } catch (e) {} }); }
       SRC_B.forEach(function(h){
-        var c = new AbortController(), tm = setTimeout(function(){ c.abort(); }, 4000); ctls.push(c);
+        var c = new AbortController(), tm = setTimeout(function(){ c.abort(); }, 6000); ctls.push(c);
         (window.__origFetch || fetch)(h + '/streams/' + encodeURIComponent(id), { signal: c.signal })
           .then(function(r){ if (!r.ok) throw 0; return r.json(); })
           .then(function(d){
@@ -2088,7 +2088,7 @@ window.__bosLyricFix={fixLine:fixLine,demoji:demoji};
     Y.next = function(){
       var tok = ++Y.tok;
       var ut = function(x){ return Y.tried.indexOf(x) < 0; };
-      var h = ((YTM_ENDPOINT && ut('ytm') && !window.__boosterDown()) ? 'ytm' : null) || (ut('pp') ? 'pp' : null) || ranked().filter(function(x){ return ut(x) && !isCool(x); })[0] || ranked().filter(ut)[0];   /* ORDER: 1) your Worker 2) server 3) server */
+      var h = ((YTM_ENDPOINT && ut('ytm') && !window.__boosterDown()) ? 'ytm' : null) || ranked().filter(function(x){ return ut(x) && !isCool(x); })[0] || (ut('pp') ? 'pp' : null) || ranked().filter(ut)[0];   /* ORDER: 1) your Worker 2) server 3) server */
       if (!h) {
         // AUTO-RETRY: every source failed -> try the SAME song again (up to MAX_RETRY times) before giving up
         var MAX_RETRY = 1, sid = Y.id;
@@ -2150,7 +2150,7 @@ window.__bosLyricFix={fixLine:fixLine,demoji:demoji};
         if ((a.readyState >= 1 || (a.buffered && a.buffered.length)) && el < 14000) { Y.wd = setTimeout(wdChk, 1500); return; }
         Y.fail(tok);
       };
-      Y.wd = setTimeout(wdChk, h === 'pp' ? 7000 : h === 'ytm' ? 3500 : 4000);
+      Y.wd = setTimeout(wdChk, h === 'pp' ? 9000 : h === 'ytm' ? 3500 : 6000);
     };
     Y.fail = function(tok){
       if (tok !== Y.tok || !Y.on || Y.mode !== 'audio') return;
