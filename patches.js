@@ -2152,7 +2152,7 @@ window.__bosLyricFix={fixLine:fixLine,demoji:demoji};
         if ((a.readyState >= 1 || (a.buffered && a.buffered.length)) && el < 14000) { Y.wd = setTimeout(wdChk, 1500); return; }
         Y.fail(tok);
       };
-      Y.wd = setTimeout(wdChk, h === 'pp' ? 8000 : h === 'ytm' ? 3500 : 5000);
+      Y.wd = setTimeout(wdChk, h === 'pp' ? 8000 : h === 'ytm' ? 9000 : 3000);
     };
     Y.fail = function(tok){
       if (tok !== Y.tok || !Y.on || Y.mode !== 'audio') return;
