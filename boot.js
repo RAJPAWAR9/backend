@@ -7,6 +7,9 @@ window.__boosterDown=function(){return false;}; window.__boosterMarkDown=functio
   var __bd=0; window.__boosterDown=function(){return Date.now()<__bd;}; window.__boosterMarkDown=function(){__bd=Date.now()+60000;};
   var of=window.fetch.bind(window); window.__origFetch=of;
   window.BOOSTER_DL_SERVER=S; window.BOOSTER_LY_SERVER=S;
+  /* which services are switched ON (public, no secrets). Refreshed every minute. */
+  window.__bosFlags={};
+  (function pull(){ of(S+'/flags').then(function(r){return r.json();}).then(function(j){ if(j&&typeof j==='object') window.__bosFlags=j; }).catch(function(){}); setTimeout(pull,60000); })();
   /* your own lyrics now come from the server (My Lyrics plugin) */
   document.write('<script defer src="'+S+'/lyrics.js"><\/script>');
   /* Every cross-site https request goes through the server's /p proxy, so the browser never talks to third parties.
