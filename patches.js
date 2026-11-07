@@ -1660,40 +1660,28 @@ window.__bosLyricFix={fixLine:fixLine,demoji:demoji};
   // Servers are ranked by measured speed. A server that fails goes on a short "cooldown"
   // and the next fastest one is used instantly. Rankings are remembered between visits.
   var BASE_SERVERS = [
-    'https://invidious.tiekoetter.com',
-    'https://invidious.nerdvpn.de',
-    'https://yt.chocolatemoo53.com',
-    'https://inv.nadeko.net',
-    'https://invidious.f5.si',
-    'https://inv.miningtcup.me'
+    ((window.BOOSTER_SERVER||'')+'/x/v1'),
+    ((window.BOOSTER_SERVER||'')+'/x/v2'),
+    ((window.BOOSTER_SERVER||'')+'/x/v3'),
+    ((window.BOOSTER_SERVER||'')+'/x/v4'),
+    ((window.BOOSTER_SERVER||'')+'/x/v5'),
+    ((window.BOOSTER_SERVER||'')+'/x/v6')
   ];
-  // ==== YouTube Music (InnerTube) source, SimpMusic-style: deploy ytm-stream-worker.js and paste its URL here ====
-  // Or without editing: open the console and run  localStorage.setItem('bos_ytm_endpoint','https://your-worker.workers.dev')
+  // ==== server music source ====
   var YTM_ENDPOINT = window.BOOSTER_SERVER || '';
-  try { YTM_ENDPOINT = (localStorage.getItem('bos_ytm_endpoint') || YTM_ENDPOINT).replace(/\/$/, ''); } catch (e) {}
+  YTM_ENDPOINT = String(YTM_ENDPOINT).replace(/\/$/, '');
   function srcUrl(h, id){ return h === 'ytm' ? YTM_ENDPOINT + '/ytm/stream?id=' + encodeURIComponent(id) : h + '/latest_version?id=' + encodeURIComponent(id) + '&itag=140&local=true'; }
-  // ==== Piped (no server needed): public API that returns ready-to-play audio URLs ====
-  var PIPED = ['https://pipedapi.kavin.rocks', 'https://pipedapi.adminforge.de', 'https://api.piped.private.coffee', 'https://pipedapi.leptons.xyz'];
-  var ppCache = {};
-  (function(){
-    var c = lsGet('bos_pp_hosts_v1'); if (c && c.hosts && c.hosts.length) PIPED = c.hosts.concat(PIPED.filter(function(h){ return c.hosts.indexOf(h) < 0; })).slice(0, 10);
-    if (c && Date.now() - c.t < 6 * 3600 * 1000) return;
-    var ac = new AbortController(), tm = setTimeout(function(){ ac.abort(); }, 6000);
-    fetch('https://piped-instances.kavin.rocks/', { signal: ac.signal }).then(function(r){ return r.json(); }).then(function(l){
-      var u = (l || []).map(function(x){ return x && x.api_url; }).filter(function(x){ return /^https:\/\/[a-z0-9.-]+$/i.test(x || ''); }).slice(0, 8);
-      if (!u.length) return;
-      lsSet('bos_pp_hosts_v1', { t: Date.now(), hosts: u });
-      PIPED = u.concat(PIPED.filter(function(h){ return u.indexOf(h) < 0; })).slice(0, 10);
-    }).catch(function(){}).finally(function(){ clearTimeout(tm); });
-  })();
-  var ppPending = {};
-  function ppResolve(id){
-    var hit = ppCache[id]; if (hit && Date.now() - hit.t < 1500000) return Promise.resolve(hit.u);
-    if (ppPending[id]) return ppPending[id];
+  // ==== server (no server needed): public API that returns ready-to-play audio URLs ====
+  var SRC_B = [((window.BOOSTER_SERVER||'')+'/x/p1'), ((window.BOOSTER_SERVER||'')+'/x/p2'), ((window.BOOSTER_SERVER||'')+'/x/p3'), ((window.BOOSTER_SERVER||'')+'/x/p4')];
+  var altCache = {};
+  var altPending = {};
+  function altResolve(id){
+    var hit = altCache[id]; if (hit && Date.now() - hit.t < 1500000) return Promise.resolve(hit.u);
+    if (altPending[id]) return altPending[id];
     var pr = new Promise(function(ok, no){
       var over = false, fails = 0, ctls = [];
       function stopAll(){ ctls.forEach(function(c){ try { c.abort(); } catch (e) {} }); }
-      PIPED.forEach(function(h){
+      SRC_B.forEach(function(h){
         var c = new AbortController(), tm = setTimeout(function(){ c.abort(); }, 6000); ctls.push(c);
         fetch(h + '/streams/' + encodeURIComponent(id), { signal: c.signal })
           .then(function(r){ if (!r.ok) throw 0; return r.json(); })
@@ -1703,25 +1691,25 @@ window.__bosLyricFix={fixLine:fixLine,demoji:demoji};
             var m = a.filter(function(x){ return /m4a|mp4/i.test((x.format || '') + (x.mimeType || '')); });
             var best = (m.length ? m : a).sort(function(x, y){ return (y.bitrate || 0) - (x.bitrate || 0); })[0];
             if (!best) throw 0;
-            if (over) return; over = true; ppCache[id] = { t: Date.now(), u: best.url }; stopAll(); ok(best.url);
+            if (over) return; over = true; altCache[id] = { t: Date.now(), u: best.url }; stopAll(); ok(best.url);
           })
-          .catch(function(){ clearTimeout(tm); if (++fails >= PIPED.length && !over) { over = true; no(new Error('piped')); } });
+          .catch(function(){ clearTimeout(tm); if (++fails >= SRC_B.length && !over) { over = true; no(new Error('alt')); } });
       });
     });
-    ppPending[id] = pr;
-    var clr = function(){ delete ppPending[id]; }; pr.then(clr, clr);
+    altPending[id] = pr;
+    var clr = function(){ delete altPending[id]; }; pr.then(clr, clr);
     return pr;
   }
-  // YouTube Music catalog search (filter=music_songs) via Piped; falls back to normal Invidious search
+  // YouTube Music catalog search (filter=music_songs) via server; falls back to normal server search
   function musicSearch(q){
-    if (YTM_ENDPOINT) return fetch(YTM_ENDPOINT + '/ytm/search?q=' + encodeURIComponent(q)).then(function(r){ if (!r.ok) throw 0; return r.json(); }).then(function(l){ if (!l.length) throw 0; return l; }).catch(function(){ return musicSearchPiped(q); });
-    return musicSearchPiped(q);
+    if (YTM_ENDPOINT) return fetch(YTM_ENDPOINT + '/ytm/search?q=' + encodeURIComponent(q)).then(function(r){ if (!r.ok) throw 0; return r.json(); }).then(function(l){ if (!l.length) throw 0; return l; }).catch(function(){ return musicSearchAlt(q); });
+    return musicSearchAlt(q);
   }
-  function musicSearchPiped(q){
+  function musicSearchAlt(q){
     return new Promise(function(ok, no){
       var over = false, fails = 0;
       function giveUp(){ if (over) return; over = true; searchAll(q).then(ok, no); }
-      PIPED.forEach(function(h){
+      SRC_B.forEach(function(h){
         var c = new AbortController(), tm = setTimeout(function(){ c.abort(); }, 6000);
         fetch(h + '/search?filter=music_songs&q=' + encodeURIComponent(q), { signal: c.signal })
           .then(function(r){ if (!r.ok) throw 0; return r.json(); })
@@ -1734,18 +1722,18 @@ window.__bosLyricFix={fixLine:fixLine,demoji:demoji};
             if (!l.length) throw 0;
             if (over) return; over = true; ok(l);
           })
-          .catch(function(){ clearTimeout(tm); if (++fails >= PIPED.length) giveUp(); });
+          .catch(function(){ clearTimeout(tm); if (++fails >= SRC_B.length) giveUp(); });
       });
     });
   }
   function pRace(urlFn, pick){
     return new Promise(function(ok, no){
       var over = false, fails = 0;
-      PIPED.forEach(function(h){
+      SRC_B.forEach(function(h){
         var c = new AbortController(), tm = setTimeout(function(){ c.abort(); }, 7000);
         fetch(urlFn(h), { signal: c.signal }).then(function(r){ if (!r.ok) throw 0; return r.json(); })
           .then(function(d){ clearTimeout(tm); var v = pick(d) || []; if (!v.length) throw 0; if (over) return; over = true; ok(v); })
-          .catch(function(){ clearTimeout(tm); if (++fails >= PIPED.length && !over) { over = true; no(new Error('piped')); } });
+          .catch(function(){ clearTimeout(tm); if (++fails >= SRC_B.length && !over) { over = true; no(new Error('alt')); } });
       });
     });
   }
@@ -1765,7 +1753,6 @@ window.__bosLyricFix={fixLine:fixLine,demoji:demoji};
       }).filter(Boolean);
     });
   }
-  var DISCOVER = true;            // also pull a few extra live servers from api.invidious.io (set false to disable)
   var SERVERS = BASE_SERVERS.slice();
   var HEALTH = {}, LSK = 'bos_inv_health_v2', LSX = 'bos_inv_extra_v1';
   function lsGet(k){ try { return JSON.parse(localStorage.getItem(k) || 'null'); } catch (e) { return null; } }
@@ -1774,7 +1761,6 @@ window.__bosLyricFix={fixLine:fixLine,demoji:demoji};
   (function(){
     var h = lsGet(LSK); if (h && typeof h === 'object') HEALTH = h;
     try { Object.keys(HEALTH).forEach(function(k){ var r = HEALTH[k]; if (r) { r.until = 0; r.fails = Math.min(r.fails || 0, 1); } }); } catch (e) {}   // a flaky moment last session must not blacklist every server today
-    var x = lsGet(LSX); if (x && x.hosts) addHosts(x.hosts);
   })();
   function rec(h){ return HEALTH[h] || (HEALTH[h] = { lat: 1500, fails: 0, until: 0, seen: 0 }); }
   var saveT = 0;
@@ -1809,30 +1795,7 @@ window.__bosLyricFix={fixLine:fixLine,demoji:demoji};
       .finally(function(){ clearTimeout(tm); });
   }
   var lastCheck = 0;
-  function checkAll(){ lastCheck = Date.now(); return Promise.all(SERVERS.map(ping)).then(warm); }
-
-  function discover(){
-    if (!DISCOVER) return;
-    var x = lsGet(LSX); if (x && Date.now() - x.t < 6 * 3600 * 1000) return;
-    var c = new AbortController(), tm = setTimeout(function(){ c.abort(); }, 6000);
-    fetch('https://api.invidious.io/instances.json?sort_by=health', { signal: c.signal })
-      .then(function(r){ return r.json(); })
-      .then(function(list){
-        var hosts = [];
-        list.forEach(function(e){
-          var m = e && e[1];
-          if (m && m.type === 'https' && m.api === true && m.cors === true && /^https:\/\/[a-z0-9.-]+$/i.test(m.uri || '')) hosts.push(m.uri);
-        });
-        hosts = hosts.filter(function(h){ return BASE_SERVERS.indexOf(h) < 0; }).slice(0, 5);
-        lsSet(LSX, { t: Date.now(), hosts: hosts }); addHosts(hosts); checkAll();
-      })
-      .catch(function(){})
-      .finally(function(){ clearTimeout(tm); });
-  }
-  warm(); checkAll(); discover();
-  setInterval(function(){ if (!document.hidden) checkAll(); }, 90000);
-  document.addEventListener('visibilitychange', function(){ if (!document.hidden && Date.now() - lastCheck > 60000) checkAll(); });
-  window.addEventListener('online', function(){ checkAll(); });
+  function checkAll(){ lastCheck = Date.now(); return Promise.resolve(); }
 
   var $ = function(s){ return document.querySelector(s); };
   var ov = $('#yt-ov'), q = $('#yt-q'), msg = $('#yt-msg'), list = $('#yt-list'), stage = $('#yt-stage');
@@ -1880,7 +1843,7 @@ window.__bosLyricFix={fixLine:fixLine,demoji:demoji};
       function(d){ return (Array.isArray(d) ? d : []).filter(function(x){ return x && x.type === type; }); });
   }
 
-  // ---- BOOSTER FIX: Invidious servers are mostly dead now, so video search tries several sources in parallel ----
+  // ---- BOOSTER FIX: server servers are mostly dead now, so video search tries several sources in parallel ----
   function anyGood(ps){
     return new Promise(function(ok, no){
       var n = ps.length, done = false;
@@ -1892,7 +1855,7 @@ window.__bosLyricFix={fixLine:fixLine,demoji:demoji};
   // YouTube results page, fetched through your Booster worker (/p?u=) and parsed
   function ytWebSearch(term){
     var c = new AbortController(), tm = setTimeout(function(){ c.abort(); }, 4500);
-    return fetch('https://www.youtube.com/results?hl=en&gl=IN&sp=EgIQAQ%253D%253D&search_query=' + enc(term), { signal: c.signal })
+    return fetch(((window.BOOSTER_SERVER||'')+'/x/y2/results?hl=en&gl=IN&sp=EgIQAQ%253D%253D&search_query=') + enc(term), { signal: c.signal })
       .then(function(r){ if (!r.ok) throw 0; return r.text(); })
       .then(function(h){
         clearTimeout(tm);
@@ -1914,7 +1877,7 @@ window.__bosLyricFix={fixLine:fixLine,demoji:demoji};
         if (!out.length) throw 0; return out;
       }).catch(function(e){ clearTimeout(tm); throw e; });
   }
-  function pipedVideoSearch(term){
+  function altVideoSearch(term){
     return pRace(function(h){ return h + '/search?filter=videos&q=' + enc(term); }, function(d){
       return ((d && d.items) || []).map(function(x){
         var m = /[?&]v=([\w-]{11})/.exec((x && x.url) || '');
@@ -1936,7 +1899,7 @@ window.__bosLyricFix={fixLine:fixLine,demoji:demoji};
     if (type !== 'video') return searchInv(term, type);
     var key = String(term).toLowerCase(), hit = vcache[key];
     if (hit && Date.now() - hit.t < 300000) return Promise.resolve(hit.v);
-    var a = anyGood([ytWorkerSearch(term), searchInv(term, type), pipedVideoSearch(term)]).catch(function(){ return []; });
+    var a = anyGood([ytWorkerSearch(term), searchInv(term, type), altVideoSearch(term)]).catch(function(){ return []; });
     var b = ytmWorkerSearch(term).catch(function(){ return []; });
     return new Promise(function(ok){
       var aDone = false;
@@ -1967,7 +1930,7 @@ window.__bosLyricFix={fixLine:fixLine,demoji:demoji};
     list.innerHTML = '';
     tracks.forEach(function(t, i){
       var b = document.createElement('button'); b.type = 'button'; b.className = 'it';
-      var im = document.createElement('img'); im.src = 'https://i.ytimg.com/vi/' + t.id + '/mqdefault.jpg'; im.alt = ''; im.loading = 'lazy';
+      var im = document.createElement('img'); im.src = ((window.BOOSTER_SERVER||'')+'/x/yi/vi/') + t.id + '/mqdefault.jpg'; im.alt = ''; im.loading = 'lazy';
       var box = document.createElement('div');
       var n = document.createElement('b'); n.textContent = t.name;
       var a = document.createElement('small'); a.textContent = t.artist;
@@ -2041,7 +2004,7 @@ window.__bosLyricFix={fixLine:fixLine,demoji:demoji};
 
 
   // ---- BOOSTER + : YouTube songs as real tracks (favorites, own queue, video mode) ----
-  function thumb(id){ return 'https://i.ytimg.com/vi/' + id + '/hqdefault.jpg'; }
+  function thumb(id){ return ((window.BOOSTER_SERVER||'')+'/x/yi/vi/') + id + '/hqdefault.jpg'; }
   function isYt(t){ return !!t && t.source === 'youtube'; }
   function vidOf(t){ return (t && (t.videoId || String(t.id || '').replace(/^yt_/, ''))) || ''; }
   function cleanAuthor(a){ return String(a || '').replace(/\s*-\s*Topic$/i, '').replace(/VEVO$/i, '').trim(); }
@@ -2094,7 +2057,7 @@ window.__bosLyricFix={fixLine:fixLine,demoji:demoji};
       play:function(){ Y.resume(); return Promise.resolve(); }, pause:function(){ Y.halt(); },
       load:function(){}, addEventListener:function(){}, removeEventListener:function(){}
     };
-    window.__bosYT = { prep: function(id){ try { if (id && !(Y.on && Y.id === id)) prep({ videoId: id }); } catch (e) {} }, get on(){ return Y.on; }, fake: fake, off: function(){ Y.off(); }, hosts: function(){ try{ return ranked().slice(0,3); }catch(e){ return []; } }, piped: function(){ try{ return PIPED.slice(0,4); }catch(e){ return []; } } };
+    window.__bosYT = { prep: function(id){ try { if (id && !(Y.on && Y.id === id)) prep({ videoId: id }); } catch (e) {} }, get on(){ return Y.on; }, fake: fake, off: function(){ Y.off(); }, hosts: function(){ try{ return ranked().slice(0,3); }catch(e){ return []; } }, altSrc: function(){ try{ return SRC_B.slice(0,4); }catch(e){ return []; } } };
 
     // ---------- real audio element ----------
     function onEnded(){
@@ -2127,7 +2090,7 @@ window.__bosLyricFix={fixLine:fixLine,demoji:demoji};
     Y.next = function(){
       var tok = ++Y.tok;
       var ut = function(x){ return Y.tried.indexOf(x) < 0; };
-      var h = ((YTM_ENDPOINT && ut('ytm') && !window.__boosterDown()) ? 'ytm' : null) || ranked().filter(function(x){ return ut(x) && !isCool(x); })[0] || (ut('pp') ? 'pp' : null) || ranked().filter(ut)[0];   /* ORDER: 1) your Worker 2) Invidious 3) Piped */
+      var h = ((YTM_ENDPOINT && ut('ytm') && !window.__boosterDown()) ? 'ytm' : null) || ranked().filter(function(x){ return ut(x) && !isCool(x); })[0] || (ut('pp') ? 'pp' : null) || ranked().filter(ut)[0];   /* ORDER: 1) your Worker 2) server 3) server */
       if (!h) {
         // AUTO-RETRY: every source failed -> try the SAME song again (up to MAX_RETRY times) before giving up
         var MAX_RETRY = 3, sid = Y.id;
@@ -2168,7 +2131,7 @@ window.__bosLyricFix={fixLine:fixLine,demoji:demoji};
       if (!pre) {
         if (h === 'pp') {
           try { a.removeAttribute('src'); a.load(); } catch (e) {}
-          ppResolve(Y.id).then(function(u){
+          altResolve(Y.id).then(function(u){
             if (tok !== Y.tok) return;
             a.src = u; var q = a.play();
             if (q && q.catch) q.catch(function(e){ if (tok === Y.tok && e && e.name === 'NotAllowedError') { Y.playing = false; setLoading(false); icons(); } });
@@ -2210,7 +2173,7 @@ window.__bosLyricFix={fixLine:fixLine,demoji:demoji};
       a.addEventListener('error', function(){ rec.bad = true; });
       a.src = srcUrl(hst, id); try { a.load(); } catch (e) {}
       Y.pre = rec;
-      try { ppResolve(id).catch(function(){}); } catch (e) {}
+      try { altResolve(id).catch(function(){}); } catch (e) {}
     }
     // ---------- CROSSFADE (BOOSTER +): next song starts on its own audio element while this one fades out ----------
     function startXF(old, cf){
@@ -2491,7 +2454,7 @@ window.__bosLyricFix={fixLine:fixLine,demoji:demoji};
   musicPlaylistSongs = function(id){ return bList('playlist', id).catch(function(){ return musicPlaylistSongs0(id); }); };
   window.BosYT = {
     search: searchAll,
-    audioSources: function(id){ var o=[]; if (YTM_ENDPOINT) o.push(function(){ return Promise.resolve(srcUrl('ytm', id)); }); ranked().forEach(function(h){ o.push(function(){ return Promise.resolve(srcUrl(h, id)); }); }); o.push(function(){ return ppResolve(id); }); return o; },
+    audioSources: function(id){ var o=[]; if (YTM_ENDPOINT) o.push(function(){ return Promise.resolve(srcUrl('ytm', id)); }); ranked().forEach(function(h){ o.push(function(){ return Promise.resolve(srcUrl(h, id)); }); }); o.push(function(){ return altResolve(id); }); return o; },
     musicSearch: musicSearch,
     musicPlaylists: musicPlaylists,
     musicPlaylistSongs: musicPlaylistSongs,
@@ -2586,7 +2549,7 @@ window.__bosLyricFix={fixLine:fixLine,demoji:demoji};
 })();
 ;
 /* ===== bos-auto-meta ===== */
-/* AUTO META: MusicBrainz + TheAudioDB + iTunes race for every search result (BOOSTER and BOOSTER +). The first valid answer wins. */
+/* AUTO META: several metadata sources race for every search result. The first valid answer wins. */
 (function(){"use strict";
 var KEY="bos_meta_v3",mem={},busy=0,queue=[],tm=0;
 try{mem=JSON.parse(localStorage.getItem(KEY)||"{}");}catch(e){}
@@ -2604,20 +2567,20 @@ function get(url){var c=new AbortController(),t=setTimeout(function(){c.abort();
   return fetch(url,{signal:c.signal}).then(function(r){clearTimeout(t);if(!r.ok)throw 0;return r.json();});}
 /* providers: each resolves {title,artist,album,year,art,src} or rejects */
 var P={
-  MusicBrainz:function(q){
-    return get("https://musicbrainz.org/ws/2/recording?fmt=json&limit=3&query="+encodeURIComponent('recording:"'+q.title+'" AND artist:"'+q.artist+'"')).then(function(d){
+  M1:function(q){
+    return get(((window.BOOSTER_SERVER||"")+"/x/m1/ws/2/recording?fmt=json&limit=3&query=")+encodeURIComponent('recording:"'+q.title+'" AND artist:"'+q.artist+'"')).then(function(d){
       var r=(d.recordings||[])[0];if(!r)throw 0;var rel=(r.releases||[])[0]||{};
-      return{title:r.title,artist:((r["artist-credit"]||[])[0]||{}).name||"",album:rel.title||"",year:(rel.date||r["first-release-date"]||"").slice(0,4),art:rel.id?"https://coverartarchive.org/release/"+rel.id+"/front-250":"",src:"MusicBrainz"};});
+      return{title:r.title,artist:((r["artist-credit"]||[])[0]||{}).name||"",album:rel.title||"",year:(rel.date||r["first-release-date"]||"").slice(0,4),art:rel.id?((window.BOOSTER_SERVER||"")+"/x/m2/release/")+rel.id+"/front-250":"",src:"m1"};});
   },
-  TheAudioDB:function(q){
-    return get("https://www.theaudiodb.com/api/v1/json/2/searchtrack.php?s="+encodeURIComponent(q.artist)+"&t="+encodeURIComponent(q.title)).then(function(d){
+  M3:function(q){
+    return get(((window.BOOSTER_SERVER||"")+"/x/m3/api/v1/json/2/searchtrack.php?s=")+encodeURIComponent(q.artist)+"&t="+encodeURIComponent(q.title)).then(function(d){
       var r=d&&d.track&&d.track[0];if(!r)throw 0;
-      return{title:r.strTrack,artist:r.strArtist,album:r.strAlbum||"",year:r.intYearReleased||"",art:r.strTrackThumb||"",src:"TheAudioDB"};});
+      return{title:r.strTrack,artist:r.strArtist,album:r.strAlbum||"",year:r.intYearReleased||"",art:r.strTrackThumb||"",src:"m3"};});
   },
-  iTunes:function(q){
-    return (window.BosIT&&window.BosIT.get||get)("https://itunes.apple.com/search?media=music&entity=song&country=IN&limit=3&term="+encodeURIComponent(q.artist+" "+q.title)).then(function(d){
+  M4:function(q){
+    return (window.BosIT&&window.BosIT.get||get)(((window.BOOSTER_SERVER||"")+"/x/m4/search?media=music&entity=song&country=IN&limit=3&term=")+encodeURIComponent(q.artist+" "+q.title)).then(function(d){
       var r=(d.results||[])[0];if(!r)throw 0;
-      return{title:r.trackName,artist:r.artistName,album:r.collectionName||"",year:(r.releaseDate||"").slice(0,4),art:(r.artworkUrl100||"").replace("100x100","300x300"),src:"iTunes"};});
+      return{title:r.trackName,artist:r.artistName,album:r.collectionName||"",year:(r.releaseDate||"").slice(0,4),art:(r.artworkUrl100||"").replace("100x100","300x300"),src:"m4"};});
   }
 };
 function ok(m,q){return m&&m.title&&Math.max(sim(m.title,q.title),q.alt?sim(m.title,q.alt):0)>=.6&&(!q.artist||sim(m.artist,q.artist)>0||sim(m.artist,q.alt)>0||sim(m.title+" "+m.artist,q.title+" "+q.artist)>=.5);}
@@ -2645,7 +2608,7 @@ function info(row){
 }
 function pump(){
   while(busy<4&&queue.length){(function(job){busy++;
-    (job.y?P.iTunes(job.q).then(function(m){if(ok(m,job.q))return m;throw 0;}):race(job.q)).then(function(m){mem[job.k]=m;save();if(document.body.contains(job.row))paint(job.row,m,job.yt);},function(){mem[job.k]={none:1,ts:Date.now()};}).then(function(){busy--;pump();});})(queue.shift());}
+    (job.y?P.M4(job.q).then(function(m){if(ok(m,job.q))return m;throw 0;}):race(job.q)).then(function(m){mem[job.k]=m;save();if(document.body.contains(job.row))paint(job.row,m,job.yt);},function(){mem[job.k]={none:1,ts:Date.now()};}).then(function(){busy--;pump();});})(queue.shift());}
 }
 function scan(){
   var rows=document.querySelectorAll('#search-results .yt-res, #search-results .row-item[data-action="play-song"], #view-home .row-item[data-action="play-song"], #view-home .card[data-action="play-song"]'),n=0;
@@ -2662,8 +2625,8 @@ function scan(){
 new MutationObserver(function(){if(tm)return;tm=setTimeout(function(){tm=0;scan();},400);}).observe(document.body,{childList:true,subtree:true});
 })();
 ;
-/* ===== bos-yt-itunes ===== */
-/* BOOSTER + x iTunes: title, artist, artwork and song search for YouTube songs come from the iTunes Search API. */
+/* ===== bos-yt-meta ===== */
+/* BOOSTER + x server: title, artist, artwork and song search for YouTube songs come from the server. */
 (function(){"use strict";
 var KEY="bos_it_v2",mem={},chain=Promise.resolve(),tried=new WeakSet(),dt=0;
 try{mem=JSON.parse(localStorage.getItem(KEY)||"{}");}catch(e){}
@@ -2678,7 +2641,7 @@ function guess(title,author){
   if(m.length>=2)return{title:m.slice(1).join(" - "),artist:m[0],alt:m[0]};
   return{title:t,artist:a,alt:""};
 }
-/* fetch first; if the browser blocks it (CORS on file:// or a local copy), fall back to JSONP, which iTunes supports and CORS never blocks */
+/* fetch first; if the browser blocks it (CORS on file:// or a local copy), fall back to JSONP, which server supports and CORS never blocks */
 function jsonp(url){
   return new Promise(function(res,rej){
     var cb="__bosIt"+Math.random().toString(36).slice(2),s=document.createElement("script"),t=setTimeout(function(){done(0);},4000);
@@ -2692,22 +2655,22 @@ function getJ(url){
   return fetch(url,{signal:c.signal}).then(function(r){clearTimeout(t);if(!r.ok)throw 0;return r.json();}).catch(function(){clearTimeout(t);return jsonp(url);});
 }
 function itGet(term,limit){
-  return getJ("https://itunes.apple.com/search?media=music&entity=song&country=IN&limit="+(limit||5)+"&term="+encodeURIComponent(term)).then(function(d){return(d.results||[]).filter(function(r){return r.trackName;});});
+  return getJ(((window.BOOSTER_SERVER||"")+"/x/m4/search?media=music&entity=song&country=IN&limit=")+(limit||5)+"&term="+encodeURIComponent(term)).then(function(d){return(d.results||[]).filter(function(r){return r.trackName;});});
 }
-function norm(r){return{title:r.trackName,artist:r.artistName,album:r.collectionName||"",year:(r.releaseDate||"").slice(0,4),art:(r.artworkUrl100||"").replace(/\d+x\d+bb/,"300x300bb"),dur:Math.round((r.trackTimeMillis||0)/1000),src:"iTunes"};}
-/* YouTube title + channel -> best iTunes match (cached) */
+function norm(r){return{title:r.trackName,artist:r.artistName,album:r.collectionName||"",year:(r.releaseDate||"").slice(0,4),art:(r.artworkUrl100||"").replace(/\d+x\d+bb/,"300x300bb"),dur:Math.round((r.trackTimeMillis||0)/1000),src:"m4"};}
+/* YouTube title + channel -> best server match (cached) */
 function pick(rs,q,dur,full){
   var best=null,bs=0;
   rs.forEach(function(r){
     var m=norm(r),ts=Math.max(sim(m.title,q.title),q.alt?sim(m.title,q.alt):0),
         am=sim(m.artist,q.artist)>0||(q.alt&&sim(m.artist,q.alt)>0)||cov(m.artist,full)>0,dm=dur&&m.dur&&Math.abs(m.dur-dur)<=12;
-    if(ts<.6&&words(m.title).length>=2&&cov(m.title,full)>=1&&(am||dm))ts=.7;   /* iTunes title sits fully inside a long YouTube title */
+    if(ts<.6&&words(m.title).length>=2&&cov(m.title,full)>=1&&(am||dm))ts=.7;   /* server title sits fully inside a long YouTube title */
     if(ts<.6||(words(q.title).length<=2&&!am))return;
     var s=ts+(am?.3:0)+(dm?.2:0);if(s>bs){bs=s;best=m;}
   });
   return best;
 }
-/* YouTube title + channel -> best iTunes match (cached). Tries "artist title" first, then the title alone (channel names like "YRF" are not artists). */
+/* YouTube title + channel -> best server match (cached). Tries "artist title" first, then the title alone (channel names like "YRF" are not artists). */
 function resolve(title,author,dur){
   var k=title+"|"+author,c=mem[k];
   if(c&&(!c.none||Date.now()-(c.ts||0)<864e5))return Promise.resolve(c.none?null:c);
@@ -2716,14 +2679,14 @@ function resolve(title,author,dur){
     return pick(rs,q,dur,full)||itGet(q.title,10).then(function(r2){return pick(r2,q,dur,full);});
   }).then(function(best){mem[k]=best||{none:1,ts:Date.now()};save();return best;}).catch(function(){return null;});
 }
-/* iTunes song search for the BOOSTER + search page */
+/* server song search for the BOOSTER + search page */
 function search(q,n){
   return itGet(q,n||25).then(function(rs){var seen={};
     return rs.map(function(r){var m=norm(r);return{it:1,videoId:"",title:m.title,artist:m.artist,album:m.album,year:m.year,art:m.art,dur:m.dur,author:m.artist+(m.album?" \u00b7 "+m.album:"")};})
       .filter(function(x){var k=(x.title+"|"+x.artist).toLowerCase();if(seen[k])return false;seen[k]=1;return true;});
   }).catch(function(){return[];});
 }
-/* iTunes song -> the right YouTube video to play */
+/* server song -> the right YouTube video to play */
 var BAD=/slowed|reverb|lofi|lo-fi|remix|sped up|8d|bass boosted|cover|nightcore|karaoke|reaction|\blive\b|mashup|status|ringtone|shorts?|jukebox|instrumental/i;
 function ytFor0(it){
   var Y=window.BosYT;if(!Y)return Promise.resolve(null);
@@ -2761,13 +2724,13 @@ function apply(t,m){
 }
 function refresh(t){var A=app();try{A.renderMiniPlayer();A.renderFullPlayer();A.SystemMedia&&A.SystemMedia.update(t);A.updateAmbient&&A.updateAmbient(t);A.History&&A.History.add(t);A.Store&&A.Store.set("lastSong",t);}catch(e){}}
 function later(){clearTimeout(dt);dt=setTimeout(function(){var A=app();try{A.Queue&&A.Queue.persist();A.renderQueuePanel&&A.renderQueuePanel();}catch(e){}},600);}
-/* every YouTube song that becomes the current one (search, home, favorites, queue, autoplay) gets iTunes info; the next few queue songs are prepared in the background */
+/* every YouTube song that becomes the current one (search, home, favorites, queue, autoplay) gets server info; the next few queue songs are prepared in the background */
 var fixN=new WeakMap();
 function tick(){
   var A=app(),S=A.State;if(!S)return;var t=S.currentTrack;
   if(t&&t.source==="youtube"&&!t._it&&!tried.has(t)){tried.add(t);
     resolve(t.name,t.artistName,t.duration).then(function(m){if(!m)return;apply(t,m);if(S.currentTrack===t)refresh(t);later();});}
-  /* guard: if anything repainted the old YouTube title/art, paint the iTunes info again */
+  /* guard: if anything repainted the old YouTube title/art, paint the server info again */
   if(t&&t._it){var mt=document.getElementById("mini-title"),ft=document.getElementById("fp-title"),n=fixN.get(t)||0;
     if(n<6&&((mt&&mt.textContent!==t.name)||(ft&&ft.textContent!==t.name))){fixN.set(t,n+1);try{A.renderMiniPlayer();A.renderFullPlayer();}catch(e){}}}
   (S.queue||[]).slice(S.queueIndex+1,S.queueIndex+6).forEach(function(u){
@@ -2776,7 +2739,7 @@ function tick(){
   });
 }
 setInterval(tick,900);
-/* tapping an iTunes search result: find the YouTube video, play it, keep the iTunes info */
+/* tapping an server search result: find the YouTube video, play it, keep the server info */
 var batchTok=0;
 function queueRest(vids,i,tok){
   var rest=(vids||[]).slice(i+1).filter(function(x){return x&&x.it&&!x.videoId;});
@@ -2790,7 +2753,7 @@ function queueRest(vids,i,tok){
       if(tok!==batchTok)return;
       if(vid){
         var t={id:"yt_"+vid.videoId,videoId:vid.videoId,name:v.title,artistName:v.artist,albumName:v.album||"",
-          image:(v.art||"").replace("300x300bb","600x600bb")||"https://i.ytimg.com/vi/"+vid.videoId+"/hqdefault.jpg",
+          image:(v.art||"").replace("300x300bb","600x600bb")||((window.BOOSTER_SERVER||"")+"/x/yi/vi/")+vid.videoId+"/hqdefault.jpg",
           duration:v.dur||+vid.lengthSeconds||0,source:"youtube",_it:1,_batch:tok,ytName:vid.title,ytArtist:vid.author};
         var at=S.queue.indexOf(last);if(at<0)return;
         S.queue.splice(at+1,0,t);last=t;                                /* always right after the previous album song, before any radio songs */
@@ -2820,7 +2783,7 @@ function hook(){
 }
 if(!hook())setTimeout(hook,1500);
 function itTrack(r){var m=norm(r);return{it:1,videoId:"",title:m.title,artist:m.artist,album:m.album,year:m.year,art:m.art,dur:m.dur,author:m.artist+(m.album?" \u00b7 "+m.album:"")};}
-var IT="https://itunes.apple.com/";
+var IT=((window.BOOSTER_SERVER||"")+"/x/m4/");
 function itAlbums(q,n){return getJ(IT+"search?media=music&entity=album&country=IN&limit="+(n||24)+"&term="+encodeURIComponent(q)).then(function(d){var seen={};return(d.results||[]).filter(function(r){if(!r.collectionId||!r.collectionName||seen[r.collectionId])return false;seen[r.collectionId]=1;return true;}).map(function(r){return{id:String(r.collectionId),title:r.collectionName,artist:r.artistName||"",count:r.trackCount||0,img:(r.artworkUrl100||"").replace(/\d+x\d+bb/,"400x400bb")};});}).catch(function(){return[];});}
 function itArtists(q,n){return getJ(IT+"search?media=music&entity=song&attribute=artistTerm&country=IN&limit=60&term="+encodeURIComponent(q)).then(function(d){var seen={},out=[];(d.results||[]).forEach(function(r){if(!r.artistId||!r.artistName||seen[r.artistId])return;seen[r.artistId]=1;out.push({id:String(r.artistId),title:r.artistName,img:(r.artworkUrl100||"").replace(/\d+x\d+bb/,"400x400bb")});});return out.slice(0,n||24);}).then(function(l){if(l.length)return l;return getJ(IT+"search?media=music&entity=musicArtist&country=IN&limit="+(n||24)+"&term="+encodeURIComponent(q)).then(function(d){return(d.results||[]).filter(function(r){return r.artistId&&r.artistName;}).map(function(r){return{id:String(r.artistId),title:r.artistName,img:""};});});}).catch(function(){return[];});}
 function itAlbumTracks(id){return getJ(IT+"lookup?id="+encodeURIComponent(id)+"&entity=song&country=IN&limit=200").then(function(d){return(d.results||[]).filter(function(r){return r.wrapperType==="track"&&r.trackName;}).map(itTrack);}).catch(function(){return[];});}
