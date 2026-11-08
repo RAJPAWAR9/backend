@@ -1463,11 +1463,8 @@ function seekToLyric(t){ const el=primaryAudio(); if(el.duration && Number.isFin
 
 function renderLyricLine(line,index){
   const est=currentLyrics&&currentLyrics.estimated?' estimated-sync':'';
-  /* word-by-word for EVERY synced line: real word tags when the source has them, otherwise the words of the line (timed by lyricsPrepareWords) */
-  const ws=(line.real&&line.words&&line.words.length) ? line.words.map(w=>w.text)
-         : (currentLyrics&&currentLyrics.synced ? String(line.text||'').split(/\s+/).filter(Boolean) : []);
-  if(ws.length){
-    return '<div class="lyric-line karaoke-on'+est+'" data-nw="1" data-i="'+index+'" data-t="'+line.time+'"><span class="lyric-fill">'+ws.map((w,i)=>'<span class="lyric-word" style="--word-i:'+i+'">'+escapeHTML(w)+'</span>').join(' ')+'</span></div>';
+  if(line.real&&line.words&&line.words.length){
+    return '<div class="lyric-line karaoke-on'+est+'" data-nw="1" data-i="'+index+'" data-t="'+line.time+'"><span class="lyric-fill">'+line.words.map((w,i)=>'<span class="lyric-word" style="--word-i:'+i+'">'+escapeHTML(w.text)+'</span>').join(' ')+'</span></div>';
   }
   return '<div class="lyric-line'+est+'" data-i="'+index+'" data-t="'+line.time+'"><span class="lyric-fill">'+escapeHTML(line.text)+'</span></div>';
 }
@@ -1583,15 +1580,9 @@ function updateActiveLyric(currentTime, force){
       if(LY.wordsEl!==el || !LY.words || !LY.words.length){ LY.words=el.querySelectorAll(".lyric-word"); LY.wordsEl=el; LY.upto=-1; }
       const w=LY.words;
       if(w.length){
-        const wt=(!est&&lns[idx])?lns[idx]._wt:null; let upto;
+        const wt=lns[idx]&&lns[idx]._wt; let upto;
         if(wt&&wt.length===w.length){ upto=0; const ct=currentTime+.05; while(upto<wt.length&&wt[upto]<=ct) upto++; }
-        else{
-          const frac=clamp((currentTime-Number(times[idx]||0))/Math.max(.3,(end-start)*.88),0,1);
-          const L=lns[idx]; let cw=L&&L._cw;
-          if(!cw||cw.length!==w.length){ const wl=Array.prototype.map.call(w,x=>Math.max(1.5,(x.textContent||"").length)); const tot=wl.reduce((a,b)=>a+b,0)||1; let acc=0; cw=wl.map(x=>{ const f=acc/tot; acc+=x; return f; }); if(L) L._cw=cw; }
-          upto=0; while(upto<cw.length&&frac>=cw[upto]-1e-6&&!(frac<=0)) upto++;   /* word i lights when the line reaches its length-weighted start */
-          if(frac>=1) upto=w.length;
-        }
+        else{ const frac=clamp((currentTime-Number(times[idx]||0))/Math.max(.3,(end-start)*.88),0,1); upto=Math.min(w.length,Math.floor(frac*w.length+.999*(frac>=1?1:0))); }
         /* last word: once the line is essentially over, finish every word */
         if(currentTime>=end-.12 || (wt&&wt.length===w.length&&currentTime>=wt[wt.length-1]+.05)) upto=w.length;
         if(upto!==LY.upto){
