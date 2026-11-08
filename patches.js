@@ -2685,7 +2685,9 @@ function jsonp(url){
 }
 function getJ(url){
   var c=new AbortController(),t=setTimeout(function(){c.abort();},3500);
-  return fetch(url,{signal:c.signal}).then(function(r){clearTimeout(t);if(!r.ok)throw 0;return r.json();}).catch(function(){clearTimeout(t);return jsonp(url);});
+  /* 429 = server ka shared budget khatam. JSONP se retry karne par request double hoti hai aur
+     baaki calls (search / song detail) bhi 429 ho jaate hain - isliye rate-limit par retry band. */
+  return fetch(url,{signal:c.signal}).then(function(r){clearTimeout(t);if(r.status===429){var e=new Error("rate");e.rate=1;throw e;}if(!r.ok)throw 0;return r.json();}).catch(function(e){clearTimeout(t);if(e&&e.rate)throw 0;return jsonp(url);});
 }
 function itGet(term,limit){
   return getJ(((window.BOOSTER_SERVER||"")+"/x/m4/search?media=music&entity=song&country=IN&limit=")+(limit||5)+"&term="+encodeURIComponent(term)).then(function(d){return(d.results||[]).filter(function(r){return r.trackName;});});
