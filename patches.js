@@ -2151,6 +2151,8 @@ window.__bosLyricFix={fixLine:fixLine,demoji:demoji};
       }
       Y.cur = h;
       var a = audio(), t0 = performance.now(), startAt = Y.base;
+      /* an element already routed through the EQ must never get a non-CORS stream (Web Audio would output silence): use a fresh one */
+      if (h !== 'ytm' && a._fx) { try { a.pause(); a.removeAttribute('src'); a.remove(); } catch (e) {} Y.au = null; a = audio(); }
       clearTimeout(Y.wd); a._tok = tok;
       a.onloadedmetadata = function(){
         if (tok !== Y.tok) return;
@@ -2169,7 +2171,11 @@ window.__bosLyricFix={fixLine:fixLine,demoji:demoji};
             a.src = u; var q = a.play();
             if (q && q.catch) q.catch(function(e){ if (tok === Y.tok && e && e.name === 'NotAllowedError') { Y.playing = false; setLoading(false); icons(); } });
           }, function(){ Y.fail(tok); });
-        } else a.src = srcUrl(h, Y.id);
+        } else {
+          if (h === 'ytm') { try { a.crossOrigin = 'anonymous'; } catch (e) {} }   /* worker stream sends CORS headers, so EQ / normalize / visualizer can process it */
+          a.src = srcUrl(h, Y.id);
+          if (h === 'ytm') { try { if (window.BoosterFX && window.BoosterFX.attach && window.BoosterFX.attach(a)) a._fx = true; } catch (e) {} }
+        }
       }
       a.volume = Y.xfIn ? 0 : Y.vol; a.muted = Y.muted; a.playbackRate = Y.rate;
       var p = (h === 'pp' && !pre) ? null : a.play();
