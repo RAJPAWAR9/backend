@@ -1020,7 +1020,7 @@ async function lyJSON(url,signal,ms,retry){
     const c=new AbortController(), to=setTimeout(()=>c.abort(),ms||7000), on=()=>c.abort();
     if(signal){ if(signal.aborted){ clearTimeout(to); throw {name:"AbortError"}; } signal.addEventListener("abort",on,{once:true}); }
     let transient=false;
-    try{ const r=await fetch(url,{signal:c.signal}); if(r.ok) return await r.json(); transient=r.status>=500||r.status===429; }
+    try{ const r=await fetch(url,{signal:c.signal}); if(r.ok) return await r.json(); transient=r.status>=500;   /* 429 = shared budget khatam: retry karne se sirf aur 429 aate hain */ }
     catch(e){ if(signal&&signal.aborted) throw {name:"AbortError"}; transient=true; }
     finally{ clearTimeout(to); if(signal) signal.removeEventListener("abort",on); }
     if(!transient) return null;
