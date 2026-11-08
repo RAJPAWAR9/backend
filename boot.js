@@ -10,7 +10,8 @@ window.__boosterDown=function(){return false;}; window.__boosterMarkDown=functio
   window.__bosFlags={};
   (function pull(){ of(S+'/flags').then(function(r){return r.json();}).then(function(j){ if(j&&typeof j==='object') window.__bosFlags=j; }).catch(function(){}); setTimeout(pull,60000); })();
   /* your own lyrics now come from the server (My Lyrics plugin) */
-  document.write('<script defer src="'+S+'/lyrics.js"><\/script>');
+  window.MY_LYRICS=window.MY_LYRICS||[];
+  (function(){ try{ var sc=document.createElement('script'); sc.async=true; sc.src=S+'/lyrics.js'; sc.onerror=function(){}; (document.head||document.documentElement).appendChild(sc); }catch(e){} })();
   /* Every cross-site https request goes through the server's /p proxy, so the browser never talks to third parties.
      Direct fallback only if the server is unreachable AND strict mode is off (localStorage bos_strict=1 turns fallback off). */
   var strict=false; try{strict=localStorage.getItem('bos_strict')==='1';}catch(e){}
@@ -25,8 +26,10 @@ window.__boosterDown=function(){return false;}; window.__boosterMarkDown=functio
   function direct(i,o,res,rej){ if(strict) return rej(new TypeError('blocked')); of(i,o).then(res,rej); }
   function viaProxy(i,o,u){
     return new Promise(function(res,rej){
-      var done=false, tm=setTimeout(function(){ if(done) return; done=true; window.__boosterMarkDown(); direct(i,o,res,rej); },7000);
-      of(S+'/p?u='+encodeURIComponent(u.href),o).then(function(r){
+      var done=false, ac=(typeof AbortController!=='undefined')?new AbortController():null, opt=o?Object.assign({},o):{};
+      if(ac&&!opt.signal) opt.signal=ac.signal;
+      var tm=setTimeout(function(){ if(done) return; done=true; try{ if(ac) ac.abort(); }catch(e){} direct(i,o,res,rej); },12000);
+      of(S+'/p?u='+encodeURIComponent(u.href),opt).then(function(r){
         if(done) return; done=true; clearTimeout(tm);
         if(r.status===403&&r.headers.get('X-Booster-Deny')) return direct(i,o,res,rej);
         res(r);
