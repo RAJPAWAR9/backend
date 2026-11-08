@@ -1659,11 +1659,10 @@ window.__bosLyricFix={fixLine:fixLine,demoji:demoji};
   // ==== SMART SERVER POOL: health-ranked, self-healing, auto-fallback ====
   // Servers are ranked by measured speed. A server that fails goes on a short "cooldown"
   // and the next fastest one is used instantly. Rankings are remembered between visits.
-  /* Tested Nov 2026 (browser, direct): only these 3 Invidious hosts are alive. Via the Worker they get 403 (datacenter IP), so they are called directly. */
+  /* Tested Nov 2026 (browser, direct): sirf ye Invidious host alive hai (baaki 403 / cookie maang rahe the).
+     Worker se ye hosts 403 dete hain (datacenter IP), isliye browser inhe direct call karta hai. */
   var BASE_SERVERS = [
-    'https://yt.chocolatemoo53.com',
-    'https://invidious.tiekoetter.com',
-    'https://inv.miningtcup.me'
+    'https://yt.chocolatemoo53.com'
   ];
   // ==== server music source ====
   var YTM_ENDPOINT = window.BOOSTER_SERVER || '';
