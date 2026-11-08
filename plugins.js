@@ -5,7 +5,7 @@
   var KEY=function(){try{return localStorage.getItem('bos_admin_key')||'';}catch(e){return '';}};
   var st=null, loading=false, note='';
   function esc(s){return String(s).replace(/[&<>"]/g,function(c){return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c];});}
-  function say(m,t){try{if(typeof toast==='function')toast(m,t||'');}catch(e){}}
+  function say(m,t){try{if(typeof window.toast==='function')window.toast(m,t||'');else if(typeof window.BOS_TOAST==='function')window.BOS_TOAST(m,t||'');}catch(e){}}
   function api(p,b){
     return F(S+'/admin/api/'+p,{method:b?'POST':'GET',headers:{'x-admin-key':KEY(),'content-type':'application/json'},body:b?JSON.stringify(b):undefined})
       .then(function(r){return r.json();});
@@ -14,7 +14,7 @@
     if(!KEY()||loading) return; loading=true;
     api('state').then(function(j){
       loading=false;
-      if(!j.success){ note=j.message||'Could not load'; if(/key/i.test(note)) try{localStorage.removeItem('bos_admin_key');}catch(e){} st=null; }
+      if(!j.success){ note=j.message||'Could not load'; if(/wrong key/i.test(note)) try{localStorage.removeItem('bos_admin_key');}catch(e){} st=null; }
       else { st=j.plugins; note=''; if(!j.kv) note='KV not bound on server: changes will not save'; }
       draw();
     },function(){ loading=false; note='Server unreachable'; draw(); });
