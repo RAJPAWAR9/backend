@@ -3608,7 +3608,7 @@ const BoosterMax=(function(){
       }else if(line.dataset.kw){
         delete line.dataset.kw;
         line.classList.remove("karaoke-on");
-        fill.textContent=fill.textContent;
+        fill.textContent=fill.textContent; /* intentional: flattens karaoke word spans back to plain text */
       }
     });
   }
@@ -4463,6 +4463,13 @@ setInterval(function(){if(State.view==='charts'&&CH.list&&!CH.busy&&Date.now()-C
 window.BOS_PLAY=function(list,i){return Player.play(list[i],list,i,{autoTransition:false});};window.BOS_TOAST=function(m,t){try{toast(m,t);}catch(e){}};
 try{window.State=State;window.Player=Player;if(typeof window.debounce!=='function')window.debounce=debounce;window.Store=(typeof Store!=="undefined"?Store:undefined);window.Api=(typeof Api!=="undefined"?Api:undefined);}catch(e){console.warn('global export',e);}
 try{window.BosApp={SmartRadio:(typeof SmartRadio!=="undefined"?SmartRadio:null),State:State,renderMiniPlayer:renderMiniPlayer,renderFullPlayer:renderFullPlayer,renderQueuePanel:renderQueuePanel,SystemMedia:SystemMedia,updateAmbient:updateAmbient,loadLyricsFor:loadLyricsFor,updatePlayIcons:updatePlayIcons,paintProgress:paintProgress,fmtTime:fmtTime,Queue:Queue,History:History,Store:Store,toast:toast,Player:Player,haltJio:function(){try{finalizeCrossfadeIfRunning();}catch(_){}try{State._autoTransitionInFlight=false;State._crossfadeTriggered=false;Player._nextInFlight=false;Player._playToken++;}catch(_){}}};}catch(e){console.warn('BosApp export',e);}
+/* ===== BRIDGE (fix): app.js lives inside an IIFE, patches.js / plugins.js run as separate scripts and call these helpers by bare name.
+   Without these exports they threw ReferenceError (playlist sheet, toast, shuffle, delete, crossfade recovery...). ===== */
+try{
+  var __bridge={toast:toast,esc:esc,backIcon:backIcon,svgPlay:svgPlay,svgTrash:svgTrash,storeCtx:storeCtx,ctxStore:ctxStore,findTrackById:findTrackById,confirmModal:confirmModal,shuffleArray:shuffleArray,normalizeSong:normalizeSong,saveSettings:saveSettings,primaryAudio:primaryAudio,bestAudioUrl:bestAudioUrl,audioA:audioA,audioB:audioB,finalizeCrossfadeIfRunning:finalizeCrossfadeIfRunning,Queue:Queue,SmartRadio:SmartRadio,FALLBACK_ART:FALLBACK_ART,renderQueuePanel:renderQueuePanel,songRow:songRow};
+  Object.keys(__bridge).forEach(function(k){ if(window[k]===undefined && __bridge[k]!==undefined){ try{window[k]=__bridge[k];}catch(_){} } });
+  Object.defineProperty(window,'crossfadeRunning',{get:function(){return crossfadeRunning;},configurable:true});
+}catch(e){console.warn('bridge export',e);}
 /* ===== SONG MENU: dots button on every BOOSTER / BOOSTMUSIC song, long-press anywhere ===== */
 (function(){
 if(window.__bosSongMenu) return; window.__bosSongMenu=true;
