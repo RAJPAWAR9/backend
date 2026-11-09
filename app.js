@@ -888,14 +888,6 @@ function parseLRC(lrc){
   });
   return out.sort((a,b)=>a.time-b.time);
 }
-/* YouTube songs: line-by-line only - word-by-word (karaoke) timing from captions is dropped here */
-function lyDropWordSync(data){
-  if(!data||!data.lines||!data.lines.length) return data;
-  let had=false;
-  data.lines.forEach(L=>{ if(!L) return; if(L.words&&L.words.length){ delete L.words; had=true; } if(L._wt&&L._wt.length){ delete L._wt; had=true; } if(L.real){ delete L.real; had=true; } });
-  if(had) data.wordSynced=false;
-  return data;
-}
 /* Every line gets per-word start times: real ones when the source has them, otherwise length-weighted inside the line */
 function lyricsPrepareWords(lines){
   for(let i=0;i<lines.length;i++){
@@ -1265,92 +1257,6 @@ async function lyS7(info,sig){
   }
   return null;
 }
-/* ============================================================ YOUTUBE CAPTIONS (CC) ENGINE ============================================================
-   1) song has plain lyrics  -> word timings from YouTube captions are aligned onto the plain lyrics
-   2) song has no lyrics     -> the captions themselves become the lyrics (marked "auto-generated")
-   Needs your own tiny server: deploy yt-captions-worker.js on Cloudflare Workers and paste its URL below. Empty = feature off. */
-const YT_CC_ENDPOINT = window.BOOSTER_SERVER || "";
-const YT_LANG={hindi:"hi",punjabi:"pa",tamil:"ta",telugu:"te",marathi:"mr",gujarati:"gu",bengali:"bn",kannada:"kn",malayalam:"ml",english:"en",bhojpuri:"hi",haryanvi:"hi",rajasthani:"hi",urdu:"ur"};
-async function lyYTFetch(info,sig){
-  if(!YT_CC_ENDPOINT) return null;
-  const lang=YT_LANG[String(info.track&&info.track.language||"").toLowerCase()]||"";
-  const u=YT_CC_ENDPOINT.replace(/\/$/,"")+"/yt/lyrics?title="+encodeURIComponent(info.titles[0]||"")+"&artist="+encodeURIComponent(info.artists[0]||"")+"&dur="+info.dur+(lang?"&lang="+lang:"");
-  const j=await lyJSON(u,sig,20000);
-  return j&&Array.isArray(j.words)&&j.words.length>=8?j:null;
-}
-/* ---- token matching: same script = exact / 1-typo match; Roman vs Devanagari = consonant-skeleton match ---- */
-const LY_DEV={"क":"k","ख":"k","ग":"g","घ":"g","ङ":"n","च":"c","छ":"c","ज":"j","झ":"j","ञ":"n","ट":"t","ठ":"t","ड":"d","ढ":"d","ण":"n","त":"t","थ":"t","द":"d","ध":"d","न":"n","प":"p","फ":"p","ब":"b","भ":"b","म":"m","र":"r","ल":"l","व":"v","श":"s","ष":"s","स":"s","ह":"h"};
-function lyHasDev(s){ return /[\u0900-\u097F]/.test(s); }
-function lyKeyN(w){ return String(w||"").toLowerCase().replace(/[^\p{L}\p{M}\p{N}]+/gu,""); }
-function lyKeySkel(w){
-  w=String(w||"").toLowerCase().normalize("NFC");
-  if(lyHasDev(w)) w=Array.from(w).map(ch=>LY_DEV[ch]||(/[a-z]/.test(ch)?ch:"")).join("");
-  else w=w.replace(/[^a-z]/g,"").replace(/chh?/g,"c").replace(/sh/g,"s").replace(/([kgjtdpbc])h/g,"$1").replace(/w/g,"v").replace(/z/g,"j").replace(/f/g,"p").replace(/q/g,"k");
-  return w.replace(/[aeiouy]/g,"").replace(/(.)\1+/g,"$1");
-}
-function lyLev1(a,b){
-  if(a.length===b.length){ let d=0; for(let i=0;i<a.length;i++) if(a[i]!==b[i]&&++d>1) return false; return true; }
-  const s=a.length<b.length?a:b, l=a.length<b.length?b:a; let i=0,j=0,d=0;
-  while(i<s.length&&j<l.length){ if(s[i]===l[j]){ i++; j++; } else { if(++d>1) return false; j++; } }
-  return true;
-}
-/* Align plain lyric lines onto caption words (order-preserving LCS). Returns synced lines or null when the match is weak. */
-function lyAlign(plain,cc){
-  const toks=[];
-  plain.forEach(L=>String(L.text||"").split(/\s+/).filter(Boolean).forEach(w=>toks.push({text:w})));
-  const CW=cc.words, n=toks.length, m=CW.length;
-  if(n<8||m<8||n*m>2.5e6) return null;
-  const mixed=lyHasDev(toks.map(x=>x.text).join(" "))!==lyHasDev(CW.map(x=>x.text).join(" "));
-  const kf=mixed?lyKeySkel:lyKeyN;
-  const A=toks.map(x=>kf(x.text)), B=CW.map(x=>kf(x.text));
-  const eq=(a,b)=>!!a&&!!b&&(a===b||(!mixed&&a.length>=4&&b.length>=4&&Math.abs(a.length-b.length)<=1&&lyLev1(a,b)));
-  const W=m+1, dp=new Uint16Array((n+1)*W);
-  for(let i=1;i<=n;i++) for(let j=1;j<=m;j++) dp[i*W+j]=eq(A[i-1],B[j-1])?dp[(i-1)*W+j-1]+1:Math.max(dp[(i-1)*W+j],dp[i*W+j-1]);
-  const time=new Array(n).fill(null); let i=n,j=m,hit=0;
-  while(i>0&&j>0){
-    if(eq(A[i-1],B[j-1])&&dp[i*W+j]===dp[(i-1)*W+j-1]+1){ time[i-1]=CW[j-1].t; hit++; i--; j--; }
-    else if(dp[(i-1)*W+j]>=dp[i*W+j-1]) i--; else j--;
-  }
-  const conf=hit/n; if(conf<(mixed?.3:.35)) return null;
-  const anc=[]; time.forEach((t,k)=>{ if(t!=null) anc.push(k); });
-  const full=time.slice(), a0=anc[0], a1=anc[anc.length-1];
-  for(let k=a0-1;k>=0;k--) full[k]=Math.max(0,full[k+1]-.4);
-  for(let k=a1+1;k<n;k++) full[k]=full[k-1]+.4;
-  for(let q=0;q<anc.length-1;q++){ const s=anc[q], e=anc[q+1]; for(let k=s+1;k<e;k++) full[k]=time[s]+(time[e]-time[s])*(k-s)/(e-s); }
-  for(let k=1;k<n;k++) if(full[k]<full[k-1]) full[k]=full[k-1];
-  const lines=[]; let p=0;
-  plain.forEach(L=>{
-    const cnt=String(L.text||"").split(/\s+/).filter(Boolean).length; if(!cnt) return;
-    const seg=[]; let real=0;
-    for(let q=0;q<cnt;q++,p++){ seg.push({t:full[p],text:toks[p].text}); if(time[p]!=null) real++; }
-    const line={time:seg[0].t,text:seg.map(w=>w.text).join(" ")};
-    if(real/cnt>=.5){ line.words=seg; line.real=true; }
-    lines.push(line);
-  });
-  return {lines,confidence:conf};
-}
-/* No lyrics at all: build lines straight from the caption words */
-function lyCCToLines(cc){
-  const out=[]; let cur=[];
-  const flush=()=>{
-    if(!cur.length) return;
-    const L={time:cur[0].t,text:cur.map(w=>w.text).join(" ")};
-    if(cc.wordTimed!==false){ L.words=cur.map(w=>({t:w.t,text:w.text})); L.real=true; }
-    out.push(L); cur=[];
-  };
-  for(const w of cc.words){
-    if(w.nl&&cur.length) flush();
-    if(cur.length&&(w.t-cur[cur.length-1].t>1.1||cur.length>=9)) flush();
-    cur.push(w);
-  }
-  flush(); return out;
-}
-/* WORKER lyrics (priority 3, after server): YouTube captions via your Worker (/yt/lyrics) -> timed lines */
-async function lyWorkerLyrics(info,sig){
-  const cc=await lyYTFetch(info,sig); if(!cc) return null;
-  const ls=lyCCToLines(cc); if(ls.length<4) return null;
-  return {synced:true,estimated:false,wordSynced:ls.some(l=>l.real),generated:true,source:"WORKER",lines:ls,s:.9,rank:2};
-}
 /* live sources only: lyricsify / api.lyricsify / karalyr / textyl are dead (challenge / 526 / 404),
    and textyl answered without checking the artist at all, which is how wrong lyrics got in. */
 const LYRICS_PROVIDERS=[lyLRCCached,lyLRCGet,lyLRCSearch,lyS6];
@@ -1376,29 +1282,9 @@ async function fetchLyricsExpanded(track,signal,onPartial){
         .finally(()=>{ if(--left<=0) end(); });
     });
   });
-  /* lyric source */
-  let wp=null;
-  if(YT_CC_ENDPOINT){ wp=Promise.race([lyWorkerLyrics(info,signal),new Promise(r=>setTimeout(()=>r(null),8000))]); wp.catch(()=>{}); }
   await runGroup([lyBooster,lyLRCCached,lyLRCGet,lyLRCSearch],4500);
-  if((!best||!best.synced||best.estimated)&&wp){
-    let wr=null; try{ wr=await wp; }catch(e){ if(e&&e.name==="AbortError") throw e; }
-    if(wr) best=wr;
-  }
   if(!best||!best.synced||best.estimated) await runGroup([lyS6],9000);
   if(!best){ for(const f of LYRICS_FALLBACKS){ consider(await f(info,signal)); if(best) break; } }
-  /* YouTube captions: sync plain lyrics word-by-word, or generate lyrics when nothing was found */
-  if((!best||best.synced===false)&&YT_CC_ENDPOINT){
-    let cc=null; try{ cc=await lyYTFetch(info,signal); }catch(e){ if(e&&e.name==="AbortError") throw e; }
-    if(cc){
-      if(best){
-        const al=lyAlign(best.lines,cc);
-        if(al) best={synced:true,estimated:false,wordSynced:al.lines.some(l=>l.real),source:best.source+"+YT-CC",lines:al.lines,s:best.s,rank:best.rank+1};
-      }else{
-        const ls=lyCCToLines(cc);
-        if(ls.length>=4) best={synced:true,estimated:false,wordSynced:ls.some(l=>l.real),generated:true,source:"YT-CC",lines:ls,s:.5,rank:.5};
-      }
-    }
-  }
   return best;
 }
 
@@ -1779,7 +1665,6 @@ function lyWatchDuration(token){
 }
 async function loadLyricsFor(track){
   const lt = track.source==="youtube" ? (ytLyricTracks(track)[0]||track) : track;   // clean title/artist for YouTube songs
-  const lineOnly = track.source==="youtube";   // YouTube: line-by-line sync only (no word-by-word/karaoke timing)
   const key = lyricsCacheKey(lt);
   if(lyricsAbort.ctrl) lyricsAbort.ctrl.abort();
   const ctrl = lyricsAbort.ctrl = new AbortController();
@@ -1791,7 +1676,6 @@ async function loadLyricsFor(track){
     if(data.estimated || data.synced===false) data = lyMakeAuto(data, State.currentTrack||track);   /* plain lyrics -> auto line-by-line timing */
     data = bosRomanizeLyrics(data);
     try{ if(window.bosFixLyrics) data = window.bosFixLyrics(data); }catch(e){}
-    if(lineOnly) data = lyDropWordSync(data);
     if(data.synced) lyricsPrepareWords(data.lines);
     currentLyrics = data; resetEstimatedLyricsClock(); LY.timesSrc=null;
     if(data.estimated && !data.autoDur) lyWatchDuration(token);
@@ -1884,7 +1768,7 @@ function lyricsOpenManual(){
 }
 function lyricsSourcePill(){
   const c=currentLyrics; if(!c) return "";
-  const tag="BOOSTER"+(c.generated?" · auto-generated from captions":"")+(c.wordSynced?" · word-synced":c.estimated?" · auto-timed (approx)":c.synced===false?" · plain":" · line-synced");
+  const tag="BOOSTER"+(c.wordSynced?" · word-synced":c.estimated?" · auto-timed (approx)":c.synced===false?" · plain":" · line-synced");
   return '<div style="text-align:center;font-size:11px;opacity:.45;padding:28px 0 8px;letter-spacing:.04em">Lyrics: '+escapeHTML(tag)+' · <span style="text-decoration:underline;cursor:pointer" onclick="lyricsOpenManual()">wrong lyrics? add yours</span></div>';
 }
 function renderLyricsPane(){
@@ -4754,7 +4638,37 @@ async function download(c){
     try{ var u0=await cands[0](); if(u0){ window.open(u0,'_blank','noopener'); tst('Opened the direct file - save it from the browser'); return; } }catch(e){}
     tst('Download failed. Try again in a moment','error'); return;
   }
-  /* NOTE: YouTube songs never fall back to JioSaavn - only the original YouTube audio is downloaded. */
+  /* 0) YouTube download = JioSaavn first (fast, no bot-check). Candidates are scored on title + artist + length so a wrong song is never saved.
+        strict=true -> only a confident match; strict=false -> best guess (last resort). */
+  async function jioTry(strict){
+    try{
+      tst(strict?'Finding the JioSaavn version…':'Trying the closest JioSaavn match…');
+      var lt=null; try{ lt=ytLyricTracks(t)[0]; }catch(e){} lt=lt||t;
+      var q=((lt.name||'')+' '+String(lt.artistName||'').split(',')[0]).trim();
+      var rr=await Api.searchSongs(q,0,10), arr=((rr.data&&rr.data.results)||[]).map(normalizeSong).filter(Boolean);
+      var d0=+t.duration||0, nz=function(x){ return String(x||'').toLowerCase().replace(/[^a-z0-9\u0900-\u097f]+/g,''); };
+      var tn=nz(lt.name), ta=nz(String(lt.artistName||'').split(',')[0]);
+      var pick=null, bs=-99;
+      arr.forEach(function(x){
+        var n=nz(x.name), a=nz(x.artistName);
+        var nm=(tn&&n)?(tn===n?3:((tn.indexOf(n)>=0||n.indexOf(tn)>=0)?2:0)):0;
+        var am=(ta&&a&&(a.indexOf(ta)>=0||ta.indexOf(a)>=0))?1:0;
+        var dd=(d0&&x.duration)?Math.abs(x.duration-d0):-1;
+        var dm=dd<0?0:(dd<=8?2:(dd<=20?1:-2));
+        var sc=nm*2+am+dm;
+        if(strict&&!(nm>=2&&dm>=0)) return;
+        if(sc>bs){ bs=sc; pick=x; }
+      });
+      if(!pick&&!strict) pick=arr[0];
+      if(!pick) return false;
+      var jc=jioUrls(pick), acj=new AbortController();
+      for(var q2=0;q2<jc.length;q2++){
+        try{ var ju=await jc[q2](); if(!ju) continue; var jr=await getBlob(ju,acj.signal); save(jr.b,jr.url); return true; }catch(e){}
+      }
+    }catch(e){}
+    return false;
+  }
+  if(await jioTry(true)) return;
   /* 1) BOOSTER server (/dl): the server fetches the ORIGINAL YouTube audio and hands it to us */
   var DS=window.BOOSTER_DL_SERVER;
   if(DS&&t.videoId&&!window.__boosterDown()){
@@ -4788,8 +4702,9 @@ async function download(c){
   });
   if(won){ try{ localStorage.setItem('bos_dl_win',new URL(won.url).origin); }catch(e){} }
   if(won){ save(won.b,won.url); return; }
+  if(await jioTry(false)) return;    /* last resort: closest JioSaavn match */
   if(firstUrl){ window.open(firstUrl,'_blank','noopener'); tst('Opened the direct file - save it from the browser'); return; }
-  tst('Could not download the YouTube audio — try again','error');
+  tst('Download failed. Try again in a moment','error');
 }
 /* ---------- smart replace ---------- */
 async function smartReplace(c){
