@@ -2074,6 +2074,11 @@ window.__bosLyricFix={fixLine:fixLine,demoji:demoji};
       a.addEventListener('waiting', function(){ if (a === Y.au && Y.on && Y.playing && Y.mode === 'audio') setLoading(true); });
       document.body.append(a); return a;
     }
+    /* Bass / voice cut / normalize / visualizer only work when the element is routed through the FX graph
+       AND the stream was fetched with CORS (the worker stream is). Never call this for a plain host. */
+    function attachFX(a){
+      try { if (a && !a._fx && window.BoosterFX && window.BoosterFX.attach && window.BoosterFX.attach(a)) a._fx = true; } catch (e) {}
+    }
     function stopAudio(){
       clearTimeout(Y.wd);
       if (Y.au) { try { Y.au.pause(); } catch (e) {} Y.au.onloadedmetadata = null; Y.au.onplaying = null; Y.au.removeAttribute('src'); try { Y.au.load(); } catch (e) {} }
@@ -2095,6 +2100,7 @@ window.__bosLyricFix={fixLine:fixLine,demoji:demoji};
         tm = setTimeout(function(){ finish(null); }, ms);
         cand.forEach(function(h){
           var a = mkAudio(); a.id = 'yt-audio-race'; a.preload = 'auto'; a.volume = 0;
+          if (h === 'ytm') { try { a.crossOrigin = 'anonymous'; } catch (e) {} }
           var r = { id: id, a: a, host: h, bad: false }; els.push(r);
           a.addEventListener('loadedmetadata', function(){ finish(r); });
           a.addEventListener('error', function(){
@@ -2174,9 +2180,10 @@ window.__bosLyricFix={fixLine:fixLine,demoji:demoji};
         } else {
           if (h === 'ytm') { try { a.crossOrigin = 'anonymous'; } catch (e) {} }   /* worker stream sends CORS headers, so EQ / normalize / visualizer can process it */
           a.src = srcUrl(h, Y.id);
-          if (h === 'ytm') { try { if (window.BoosterFX && window.BoosterFX.attach && window.BoosterFX.attach(a)) a._fx = true; } catch (e) {} }
         }
       }
+      /* a pre-buffered / crossfaded element skipped this before, which is why YouTube songs had no Audio FX */
+      if (h === 'ytm') { try { a.crossOrigin = 'anonymous'; } catch (e) {} attachFX(a); }
       a.volume = Y.xfIn ? 0 : Y.vol; a.muted = Y.muted; a.playbackRate = Y.rate;
       var p = (h === 'pp' && !pre) ? null : a.play();
       if (p && p.catch) p.catch(function(e){
@@ -2208,6 +2215,7 @@ window.__bosLyricFix={fixLine:fixLine,demoji:demoji};
       var id = vidOf(t); if (!id || (Y.pre && Y.pre.id === id)) return;
       killPre(); var hst = YTM_ENDPOINT ? 'ytm' : (ranked().filter(function(x){ return !isCool(x); })[0] || ranked()[0]); if (!hst) return;
       var a = mkAudio(); a.id = 'yt-audio-pre'; a.preload = 'auto'; a.volume = 0;
+      if (hst === 'ytm') { try { a.crossOrigin = 'anonymous'; } catch (e) {} }
       var rec = { id: id, a: a, host: hst, bad: false };
       a.addEventListener('error', function(){ rec.bad = true; });
       a.src = srcUrl(hst, id); try { a.load(); } catch (e) {}
@@ -2599,6 +2607,8 @@ var NOISE=/official|video|audio|lyric|visuali[sz]er|\bhd\b|4k|full\s+song|\bmv\b
 function clean(s){return String(s||"").replace(/\s*[\(\[][^\)\]]*[\)\]]/g,function(m){return NOISE.test(m)?"":m;}).split(/\s*\|\s*/)[0].replace(/\s*-\s*topic$/i,"").replace(/\s+/g," ").trim();}
 function guess(title,artist,yt){
   var t=clean(title),a=String(artist||"").split(/,|&/)[0].replace(/\s*-\s*Topic$/i,"").replace(/VEVO$/i,"").trim(),m=t.split(/\s+[-–—:]\s+/);
+  var bars=yt?String(title||"").split(/\s*\|\s*/).map(function(x){return x.trim();}).filter(Boolean):[];
+  if(yt&&bars.length>=2&&m.length>=2)return{title:m[0],artist:bars[1]||a,alt:m[0]};   /* "Song - Movie | Singer ..." */
   if(yt&&m.length>=2)return{title:m.slice(1).join(" - "),artist:m[0],alt:m[0]};
   return{title:t,artist:a,alt:""};
 }
@@ -2677,7 +2687,15 @@ var NOISE=/official|video|audio|lyric|visuali[sz]er|\bhd\b|4k|full\s+song|\bmv\b
 function clean(s){return String(s||"").replace(/\s*[\(\[][^\)\]]*[\)\]]/g,function(m){return NOISE.test(m)?"":m;}).split(/\s*\|\s*/)[0].replace(/\s*-\s*topic$/i,"").replace(/\s+/g," ").trim();}
 function guess(title,author){
   var t=clean(title),a=String(author||"").replace(/\s*-\s*Topic$/i,"").replace(/VEVO$/i,"").split(/,|&/)[0].trim(),m=t.split(/\s+[-\u2013\u2014:]\s+/);
-  if(m.length>=2)return{title:m.slice(1).join(" - "),artist:m[0],alt:m[0]};
+  var bars=String(title||"").split(/\s*\|\s*/).map(function(x){return x.trim();}).filter(Boolean);
+  /* "Song - Movie | Singer 1, Singer 2 | Label": the song is the part before the first dash */
+  if(bars.length>=2&&m.length>=2)return{title:m[0],artist:bars[1]||a,alt:m[0]};
+  if(m.length>=2){
+    var L=m[0],R=m.slice(1).join(" - ");
+    /* "Artist - Song" is the YouTube convention; flip it when the channel is one of the two parts */
+    if(a&&sim(a,L)>sim(a,R))return{title:R,artist:L,alt:R};
+    return{title:L,artist:R,alt:R};
+  }
   return{title:t,artist:a,alt:""};
 }
 /* fetch first; if the browser blocks it (CORS on file:// or a local copy), fall back to JSONP, which server supports and CORS never blocks */
@@ -2761,7 +2779,10 @@ function app(){return window.BosApp||{};}
 function apply(t,m){
   if(!t||t._it||!m)return;
   t.ytName=t.ytName||t.name;t.ytArtist=t.ytArtist||t.artistName;
-  t.name=m.title;t.artistName=m.artist;t.albumName=m.album||t.albumName||"";if(m.art)t.image=m.art.replace("300x300bb","600x600bb");t._it=1;
+  var changed=String(t.name||"")!==String(m.title||"")||String(t.artistName||"")!==String(m.artist||"");
+  t.name=m.title;t.artistName=m.artist;t.albumName=m.album||t.albumName||"";if(m.art)t.image=m.art.replace("300x300bb","600x600bb");
+  if(m.dur)t.studioDur=Math.round(Number(m.dur)||0)||t.studioDur;   /* lyrics databases list the studio length */
+  t._it=1;t._lyricsFix=changed;
 }
 function refresh(t){var A=app();try{A.renderMiniPlayer();A.renderFullPlayer();A.SystemMedia&&A.SystemMedia.update(t);A.updateAmbient&&A.updateAmbient(t);A.History&&A.History.add(t);A.Store&&A.Store.set("lastSong",t);}catch(e){}}
 function later(){clearTimeout(dt);dt=setTimeout(function(){var A=app();try{A.Queue&&A.Queue.persist();A.renderQueuePanel&&A.renderQueuePanel();}catch(e){}},600);}
@@ -2770,7 +2791,10 @@ var fixN=new WeakMap();
 function tick(){
   var A=app(),S=A.State;if(!S)return;var t=S.currentTrack;
   if(t&&t.source==="youtube"&&!t._it&&!tried.has(t)){tried.add(t);
-    resolve(t.name,t.artistName,t.duration).then(function(m){if(!m)return;apply(t,m);if(S.currentTrack===t)refresh(t);later();});}
+    resolve(t.name,t.artistName,t.duration).then(function(m){if(!m)return;apply(t,m);
+      if(S.currentTrack===t){refresh(t);
+        if(t._lyricsFix&&typeof A.loadLyricsFor==="function"){try{A.loadLyricsFor(t);}catch(e){}}}
+      later();});}
   /* guard: if anything repainted the old YouTube title/art, paint the server info again */
   if(t&&t._it){var mt=document.getElementById("mini-title"),ft=document.getElementById("fp-title"),n=fixN.get(t)||0;
     if(n<6&&((mt&&mt.textContent!==t.name)||(ft&&ft.textContent!==t.name))){fixN.set(t,n+1);try{A.renderMiniPlayer();A.renderFullPlayer();}catch(e){}}}
