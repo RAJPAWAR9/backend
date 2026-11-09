@@ -1047,7 +1047,7 @@ function lyInfo(track){
   add(lyStrip(raw).replace(/\s*[\(\[][^\)\]]*[\)\]]/g,""));
   add(lyStrip(raw).split(/\s+[-|–]\s+/)[0]);
   const artists=dec(track.artistName||track.artist).split(/\s*(?:,|&|\bfeat\.?|\bft\.?)\s*/i).map(s=>s.trim()).filter(Boolean).slice(0,3);
-  return {titles:titles.slice(0,4),artists,album:dec(track.albumName||track.album).replace(/\s*[\(\[][^\)\]]*[\)\]]/g,"").trim(),dur:Math.round(Number(track.duration)||0),track};
+  return {titles:titles.slice(0,4),artists,album:dec(track.albumName||track.album).replace(/\s*[\(\[][^\)\]]*[\)\]]/g,"").trim(),dur:Math.round(Number(track.studioDur)||Number(track.duration)||0),track};
 }
 function lyScore(h,info){
   const tn=h.trackName||h.name||h.title||"", an=h.artistName||h.artist||"";
@@ -1056,6 +1056,15 @@ function lyScore(h,info){
   let s=ts*.62+as*.28; const hd=Number(h.duration)||0, df=hd&&info.dur?Math.abs(hd-info.dur):99;
   if(hd&&info.dur) s+= df<=2?.1:df<=5?.05:(info.track&&info.track.source==="youtube"?(df<=12?0:df<=25?-.12:-.3):(df<=5?0:df<=9?-.12:-.35));   /* YouTube videos are often longer than the studio song */
   return {s,ts,as,df};
+}
+/* A title match alone is not enough: "Saathiyaa" exists in several films/singers, and a same-title
+   song by someone else is the usual cause of wrong lyrics. The artist has to line up, or the
+   duration has to be close, otherwise the hit is thrown away. */
+function lyPlausible(sc,info,yt){
+  if(!sc) return false;
+  const df=Number(sc.df);
+  if(sc.as>=.25) return true;
+  return Number.isFinite(df)&&df<=(yt?20:8);
 }
 function lyPlainLines(text){
   const out=[]; let blank=false;
@@ -1158,7 +1167,7 @@ async function lyLRCCached(info,sig){
     if(!h) continue;
     const sc=lyScore(h,info);
     const c=lyBuild(h,info,"B1",sc.s);
-    if(c&&c.synced&&sc.ts>=.72&&(sc.df<=8||!sc.df)) return [c];
+    if(c&&c.synced&&sc.ts>=.72&&(sc.as>=.25||sc.df<=8)) return [c];
   }
   return [];
 }
@@ -1181,7 +1190,7 @@ async function lyBooster(info,sig){
   const out=[], yt=!!(info.track&&info.track.source==="youtube");
   if(Array.isArray(arr)) for(const h of arr.slice(0,25)){
     const sc=lyScore(h,info);
-    if(sc.ts>=.6&&(sc.s>=.8||(sc.ts>=.88&&(sc.df<=10||yt)))){ const c=lyBuild(h,info,"BOOSTER",sc.s); if(c) out.push(c); }
+    if(sc.ts>=.6&&lyPlausible(sc,info,yt)&&(sc.s>=.8||(sc.ts>=.88&&(sc.df<=10||yt)))){ const c=lyBuild(h,info,"BOOSTER",sc.s); if(c) out.push(c); }
   }
   return out;
 }
@@ -1198,7 +1207,7 @@ async function lyLRCSearch(info,sig){
   const out=[], yt=!!(info.track&&info.track.source==="youtube");
   for(const arr of rs) if(Array.isArray(arr)) for(const h of arr.slice(0,20)){
     const sc=lyScore(h,info);
-    if(sc.ts>=.6&&(sc.s>=.7||(sc.ts>=.88&&(sc.df<=10||yt)))){ const c=lyBuild(h,info,"B1",sc.s); if(c) out.push(c); }
+    if(sc.ts>=.6&&lyPlausible(sc,info,yt)&&(sc.s>=.7||(sc.ts>=.88&&(sc.df<=10||yt)))){ const c=lyBuild(h,info,"B1",sc.s); if(c) out.push(c); }
   }
   return out;
 }
@@ -1227,7 +1236,7 @@ async function lyS6(info,sig){
   const ranked=songs.map(x=>{
     const h={trackName:x.name,artistName:(x.artists||x.ar||[]).map(a=>a.name).join(", "),duration:(x.duration||x.dt||0)/1000};
     return {id:x.id,h,sc:lyScore(h,info)};
-  }).filter(r=>r.sc.ts>=.6&&(r.sc.df<=6||!info.dur||!r.h.duration||yt)).sort((a,b)=>b.sc.s-a.sc.s);
+  }).filter(r=>r.sc.ts>=.6&&lyPlausible(r.sc,info,yt)&&(r.sc.df<=6||!info.dur||!r.h.duration||(yt&&r.sc.df<=25))).sort((a,b)=>b.sc.s-a.sc.s);
   for(const r of ranked.slice(0,2)){
     const lj=await lyProxyJSON(((window.BOOSTER_SERVER||"")+"/x/l6/api/song/lyric?id=")+r.id+"&lv=1&kv=1&tv=-1",sig,8000);
     const raw=lj&&lj.lrc&&lj.lrc.lyric; if(!raw) continue;
@@ -1334,11 +1343,18 @@ async function lyWorkerLyrics(info,sig){
   const ls=lyCCToLines(cc); if(ls.length<4) return null;
   return {synced:true,estimated:false,wordSynced:ls.some(l=>l.real),generated:true,source:"WORKER",lines:ls,s:.9,rank:2};
 }
-const LYRICS_PROVIDERS=[lyS3,lyLRCCached,lyLRCGet,lyLRCSearch,lyS4,lyS5,lyS6];
+/* live sources only: lyricsify / api.lyricsify / karalyr / textyl are dead (challenge / 526 / 404),
+   and textyl answered without checking the artist at all, which is how wrong lyrics got in. */
+const LYRICS_PROVIDERS=[lyLRCCached,lyLRCGet,lyLRCSearch,lyS6];
 const LYRICS_FALLBACKS=[lyS7];
-async function fetchLyricsExpanded(track,signal){
+async function fetchLyricsExpanded(track,signal,onPartial){
   const info=lyInfo(track); let best=null;
-  const consider=c=>{ if(c&&c.lines&&c.lines.length&&(!best||c.rank>best.rank)) best=c; };
+  /* a better candidate is painted the moment it arrives, no waiting for the slow sources */
+  const consider=c=>{
+    if(!(c&&c.lines&&c.lines.length)||(best&&!(c.rank>best.rank))) return;
+    best=c;
+    if(onPartial){ try{ onPartial(c); }catch(e){} }
+  };
   /* lyric source */
   const runGroup=(list,capMs)=>new Promise((resolve,reject)=>{
     let left=list.length, fin=false, timer=0, cap=0;
@@ -1347,7 +1363,7 @@ async function fetchLyricsExpanded(track,signal){
     list.forEach(p=>{
       Promise.resolve().then(()=>p(info,signal)).then(r=>{
         (Array.isArray(r)?r:[r]).forEach(consider);
-        if(best&&best.synced&&!best.estimated&&best.s>=.78){ if(best.wordSynced) end(); else if(!timer) timer=setTimeout(end,1000); }
+        if(best&&best.synced&&!best.estimated&&best.s>=.78){ if(best.wordSynced||best.s>=.86) end(); else if(!timer) timer=setTimeout(end,450); }
       }).catch(e=>{ if(e&&e.name==="AbortError"&&!fin){ fin=true; clearTimeout(timer); clearTimeout(cap); reject(e); } })
         .finally(()=>{ if(--left<=0) end(); });
     });
@@ -1360,7 +1376,7 @@ async function fetchLyricsExpanded(track,signal){
     let wr=null; try{ wr=await wp; }catch(e){ if(e&&e.name==="AbortError") throw e; }
     if(wr) best=wr;
   }
-  if(!best||!best.synced||best.estimated) await runGroup([lyS3,lyS4,lyS5,lyS6],9000);
+  if(!best||!best.synced||best.estimated) await runGroup([lyS6],9000);
   if(!best){ for(const f of LYRICS_FALLBACKS){ consider(await f(info,signal)); if(best) break; } }
   /* YouTube captions: sync plain lyrics word-by-word, or generate lyrics when nothing was found */
   if((!best||best.synced===false)&&YT_CC_ENDPOINT){
@@ -1632,7 +1648,13 @@ function ytLyricTracks(track){
     const k=lyricsNorm(name)+"|"+lyricsNorm(artist);
     if(name&&!seen.has(k)){ seen.add(k); out.push({id:track.id,name:name,artistName:artist,albumName:"",duration:Math.round(Number(track.duration)||0),source:"youtube"}); }
   };
+  /* "Song - Movie | Singer 1, Singer 2 | Label": the song comes first, the singers after the first bar */
+  const bars=String(raw).split(/\s*\|\s*/).map(x=>x.trim()).filter(Boolean);
   const m=head.split(/\s+[-–—:]\s+/);
+  if(bars.length>=2&&m.length>=2){
+    const song=m[0], movie=m.slice(1).join(" - "), people=bars.slice(1).filter(Boolean);
+    add(song,people[0]||ch); if(movie) add(song,movie); if(people[1]) add(song,people[1]);
+  }
   if(m.length>=2){
     const L=m[0], R=m.slice(1).join(" - ");
     if(lyricsSimilarity(ch,R)>lyricsSimilarity(ch,L)+.2){ add(L,R); add(R,L); }   // "Song - Artist"
@@ -1643,6 +1665,19 @@ function ytLyricTracks(track){
     if(last) add(head,last);
     add(head,ch); add(head,"");
   }
+  /* resolved studio info (iTunes via the server) knows the real singers and the studio length */
+  try{
+    const it=JSON.parse(localStorage.getItem("bos_it_v2")||"{}");
+    const rawN=String(track.ytName||track.name||""), rawA=String(track.ytArtist||track.artistName||"");
+    const r=it[rawN+"|"+rawA]||it[String(track.name||"")+"|"+String(track.artistName||"")];
+    if(r&&r.title&&!r.none){
+      /* it wins even when a weaker variant of the same pair was already built above */
+      const rk=lyricsNorm(r.title)+"|"+lyricsNorm(r.artist||"");
+      for(let i=out.length-1;i>=0;i--){ if(lyricsNorm(out[i].name)+"|"+lyricsNorm(out[i].artistName||"")===rk) out.splice(i,1); }
+      out.unshift({id:track.id,name:r.title,artistName:r.artist||"",albumName:r.album||"",
+        duration:Math.round(Number(r.dur)||Number(track.duration)||0),studioDur:Math.round(Number(r.dur)||0),source:"youtube"});
+    }
+  }catch(e){}
   /* clean title / artist / album (auto-meta) goes first */
   try{
     const mc=JSON.parse(localStorage.getItem("bos_meta_v3")||"{}"), nm=String(track.name||"");
@@ -1651,13 +1686,15 @@ function ytLyricTracks(track){
   }catch(e){}
   return out.slice(0,4);
 }
-async function fetchLyricsSmart(track,signal){
-  if(!track||track.source!=="youtube") return fetchLyricsExpanded(track,signal);
+/* the best scored result wins, not the first title variant that happened to answer */
+function lyResultRank(d){ return (Number(d&&d.rank)||0)+(d&&d.synced&&!d.estimated?1:0)+(d&&d.wordSynced?.3:0); }
+async function fetchLyricsSmart(track,signal,onPartial){
+  if(!track||track.source!=="youtube") return fetchLyricsExpanded(track,signal,onPartial);
   const cands=ytLyricTracks(track);
   /* synced lyrics first; plain lyrics only when no variant has synced */
-  const rs=await Promise.all(cands.slice(0,3).map(c=>fetchLyricsExpanded(c,signal).catch(e=>{ if(e&&e.name==="AbortError") throw e; return null; })));
+  const rs=await Promise.all(cands.slice(0,3).map(c=>fetchLyricsExpanded(c,signal,onPartial).catch(e=>{ if(e&&e.name==="AbortError") throw e; return null; })));
   const ok=rs.filter(d=>d&&d.lines&&d.lines.length);
-  return ok.find(d=>d.synced&&!d.estimated)||ok.find(d=>d.synced)||ok[0]||null;
+  return ok.sort((a,b)=>lyResultRank(b)-lyResultRank(a))[0]||null;
 }
 /* BOOSTER + : find a MY_LYRICS entry for any track (YouTube titles are matched on every cleaned candidate, fuzzy) */
 function bosFindMyLyrics(track, lt){
@@ -1751,6 +1788,13 @@ async function loadLyricsFor(track){
     State.lyricsData = {status:"ok", synced:data.synced?data.lines:null, plain:data.synced?"":data.lines.map(l=>l.text).join("\n"), estimated:false, source:data.source||""};
     renderLyricsPane(); updateActiveLyric(primaryAudio().currentTime||0, true);
   };
+  /* the first good line-synced result is shown at once; the chain keeps looking for a better one */
+  let painted=null;
+  const partial=d=>{
+    if(token!==lyricsRequestToken||!d||!d.synced||d.estimated||!d.lines||!d.lines.length) return;
+    if(painted&&lyResultRank(painted)>=lyResultRank(d)) return;
+    painted=d; apply(d);
+  };
   /* MY_LYRICS (lyrics.js): your own lyrics win over cache + every API. Works for BOOSTER and BOOSTER + (YouTube) songs */
   try{
     const mine = bosFindMyLyrics(track, lt);
@@ -1768,7 +1812,7 @@ async function loadLyricsFor(track){
     if(cached.lines && cached.lines.length){
       apply(cached);
       if((!cached.synced||cached.estimated) && (!cached.upg || Date.now()-cached.upg>72e5)){
-        fetchLyricsSmart(track, ctrl.signal).then(d=>{
+        fetchLyricsSmart(track, ctrl.signal, partial).then(d=>{
           if(token!==lyricsRequestToken) return;
           if(d && d.synced && !d.estimated && d.lines.length){ setCachedLyrics(key,d); apply(d); }
           else { cached.upg=Date.now(); setCachedLyrics(key,cached); }
@@ -1778,7 +1822,7 @@ async function loadLyricsFor(track){
     }
   }
   try{
-    const data = await fetchLyricsSmart(track, ctrl.signal);
+    const data = await fetchLyricsSmart(track, ctrl.signal, partial);
     if(token!==lyricsRequestToken) return;
     if(!data || !data.lines.length){
       if(navigator.onLine!==false) setCachedLyrics(key,{empty:true,ts:Date.now()});
@@ -4684,7 +4728,7 @@ async function download(c){
     var fs=yt?[fetch,raw]:[fetch], k=0;
     function nxt(){
       if(k>=fs.length||sig.aborted) return Promise.reject(0);
-      var f=fs[k++], ac=new AbortController(), tm=setTimeout(function(){ try{ac.abort();}catch(e){} },yt?9000:60000);
+      var f=fs[k++], ac=new AbortController(), tm=setTimeout(function(){ try{ac.abort();}catch(e){} },yt?20000:60000);
       var onAb=function(){ try{ac.abort();}catch(e){} }; sig.addEventListener('abort',onAb);
       return f(url,{signal:ac.signal}).then(function(r){ clearTimeout(tm); if(!r.ok) throw 0; return r.blob(); })
         .then(function(b){ sig.removeEventListener('abort',onAb); if(b.size<30000||/text|json|html/i.test(b.type)) throw 0; return {b:b,url:url}; })
@@ -4703,7 +4747,7 @@ async function download(c){
   /* 0) same song on the BOOSTER (server) server: fast, free, no key. strict=true -> only a close match (same length / same title) */
   async function jioTry(strict){
     try{
-      tst('Finding this song on the BOOSTER server…');
+      tst('YouTube audio unavailable — getting the JioSaavn version…');
       var lt=null; try{ lt=ytLyricTracks(t)[0]; }catch(e){} lt=lt||t;
       var q=((lt.name||'')+' '+String(lt.artistName||'').split(',')[0]).trim();
       var rr=await Api.searchSongs(q,0,8), arr=((rr.data&&rr.data.results)||[]).map(normalizeSong).filter(Boolean);
@@ -4719,13 +4763,12 @@ async function download(c){
     }catch(e){}
     return false;
   }
-  if(await jioTry(true)) return;
-  /* 1) BOOSTER server (/dl): the server fetches the audio and hands it to us */
+  /* 1) BOOSTER server (/dl): the server fetches the ORIGINAL YouTube audio and hands it to us */
   var DS=window.BOOSTER_DL_SERVER;
   if(DS&&t.videoId&&!window.__boosterDown()){
     try{
       tst('Downloading from BOOSTER server…');
-      var ac1=new AbortController(), tm1=setTimeout(function(){ try{ac1.abort();}catch(e){} },8000);
+      var ac1=new AbortController(), tm1=setTimeout(function(){ try{ac1.abort();}catch(e){} },25000);
       var r1=await fetch(DS+'/dl?id='+encodeURIComponent(t.videoId)+'&name='+encodeURIComponent(name),{signal:ac1.signal});
       clearTimeout(tm1);
       if(r1.ok){ var b1=await r1.blob(); if(b1.size>=30000&&!/text|json|html/i.test(b1.type)){ save(b1,''); return; } }
@@ -4753,7 +4796,8 @@ async function download(c){
   });
   if(won){ try{ localStorage.setItem('bos_dl_win',new URL(won.url).origin); }catch(e){} }
   if(won){ save(won.b,won.url); return; }
-  if(await jioTry(false)) return;   /* last chance: loose match on server */
+  if(await jioTry(true)) return;    /* only when no YouTube source could deliver: same song on JioSaavn */
+  if(await jioTry(false)) return;
   if(firstUrl){ window.open(firstUrl,'_blank','noopener'); tst('Opened the direct file - save it from the browser'); return; }
   tst('Download failed. Try again in a moment','error');
 }
