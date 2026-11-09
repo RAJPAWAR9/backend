@@ -4675,7 +4675,7 @@ async function download(c){
     try{
       tst('Downloading from BOOSTER server…');
       var ac1=new AbortController(), tm1=setTimeout(function(){ try{ac1.abort();}catch(e){} },25000);
-      var r1=await fetch(DS+'/dl?id='+encodeURIComponent(t.videoId)+'&name='+encodeURIComponent(name),{signal:ac1.signal});
+      var r1=await fetch(DS+'/dl?id='+encodeURIComponent(t.videoId)+'&name='+encodeURIComponent(name)+'&dur='+(+t.duration||0),{signal:ac1.signal});
       clearTimeout(tm1);
       if(r1.ok){ var b1=await r1.blob(); if(b1.size>=30000&&!/text|json|html/i.test(b1.type)){ save(b1,''); return; } }
     }catch(e){ window.__boosterMarkDown(); }
