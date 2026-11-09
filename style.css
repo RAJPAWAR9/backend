@@ -1913,3 +1913,30 @@ html body #ambient>.bos-lg-wrap{display:block!important;position:absolute;inset:
 #full-player .fp-grad i:nth-child(2){animation-duration:88s!important;animation-timing-function:ease-in-out!important;}
 #full-player .fp-grad i:nth-child(3){animation-duration:104s!important;animation-timing-function:ease-in-out!important;}
 #full-player .fp-grad i:nth-child(4){animation-duration:80s!important;animation-timing-function:ease-in-out!important;}
+
+/* ===== bos-lyrics-clean =====
+   FIX: words were piled on top of each other at the start of every line. Cause: every word was its own animated
+   GPU layer (will-change:transform + per-word translate animation + inline-block) inside a line that also animates,
+   and the compositor placed those layers at the wrong x. Now words are plain inline text that only fades its COLOUR
+   (no per-word transform/animation/layer); the line itself does one smooth scale + colour move. */
+html body #lyrics-view .lyric-line,
+html body #lyrics-view .lyric-line.active{
+  will-change:auto!important;filter:none!important;letter-spacing:0!important;
+  transform-origin:0 50%;
+  transition:transform .55s cubic-bezier(.22,1,.36,1),color .35s ease,opacity .35s ease!important;
+}
+html body #lyrics-view .lyric-line:not(.active){transform:scale(.97)!important;}
+html body #lyrics-view .lyric-line.active{transform:scale(1)!important;}
+html body #lyrics-view .lyric-line.karaoke-on .lyric-word,
+html body #lyrics-view .lyric-line.karaoke-on.active .lyric-word,
+html body #lyrics-view .lyric-line.karaoke-on.active .lyric-word.wdone,
+html body #lyrics-view .lyric-line.karaoke-on .lyric-word.wdone{
+  display:inline!important;position:static!important;
+  animation:none!important;transform:none!important;translate:none!important;scale:none!important;will-change:auto!important;
+  transition:color .28s ease,text-shadow .28s ease!important;
+}
+html body #lyrics-view .lyric-line.karaoke-on.active .lyric-word.wdone{
+  color:var(--ly-hi,#fff)!important;text-shadow:0 0 12px var(--accent-soft,rgba(255,222,176,.35))!important;
+}
+html body #lyrics-view .lyric-line.active:not(.karaoke-on){animation:none!important;}
+@media (prefers-reduced-motion:reduce){html body #lyrics-view .lyric-line{transition:color .2s ease!important;transform:none!important;}}
