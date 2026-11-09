@@ -888,6 +888,14 @@ function parseLRC(lrc){
   });
   return out.sort((a,b)=>a.time-b.time);
 }
+/* YouTube songs: line-by-line only - word-by-word (karaoke) timing from captions is dropped here */
+function lyDropWordSync(data){
+  if(!data||!data.lines||!data.lines.length) return data;
+  let had=false;
+  data.lines.forEach(L=>{ if(!L) return; if(L.words&&L.words.length){ delete L.words; had=true; } if(L._wt&&L._wt.length){ delete L._wt; had=true; } if(L.real){ delete L.real; had=true; } });
+  if(had) data.wordSynced=false;
+  return data;
+}
 /* Every line gets per-word start times: real ones when the source has them, otherwise length-weighted inside the line */
 function lyricsPrepareWords(lines){
   for(let i=0;i<lines.length;i++){
@@ -1771,6 +1779,7 @@ function lyWatchDuration(token){
 }
 async function loadLyricsFor(track){
   const lt = track.source==="youtube" ? (ytLyricTracks(track)[0]||track) : track;   // clean title/artist for YouTube songs
+  const lineOnly = track.source==="youtube";   // YouTube: line-by-line sync only (no word-by-word/karaoke timing)
   const key = lyricsCacheKey(lt);
   if(lyricsAbort.ctrl) lyricsAbort.ctrl.abort();
   const ctrl = lyricsAbort.ctrl = new AbortController();
@@ -1782,6 +1791,7 @@ async function loadLyricsFor(track){
     if(data.estimated || data.synced===false) data = lyMakeAuto(data, State.currentTrack||track);   /* plain lyrics -> auto line-by-line timing */
     data = bosRomanizeLyrics(data);
     try{ if(window.bosFixLyrics) data = window.bosFixLyrics(data); }catch(e){}
+    if(lineOnly) data = lyDropWordSync(data);
     if(data.synced) lyricsPrepareWords(data.lines);
     currentLyrics = data; resetEstimatedLyricsClock(); LY.timesSrc=null;
     if(data.estimated && !data.autoDur) lyWatchDuration(token);
@@ -4744,25 +4754,7 @@ async function download(c){
     try{ var u0=await cands[0](); if(u0){ window.open(u0,'_blank','noopener'); tst('Opened the direct file - save it from the browser'); return; } }catch(e){}
     tst('Download failed. Try again in a moment','error'); return;
   }
-  /* 0) same song on the BOOSTER (server) server: fast, free, no key. strict=true -> only a close match (same length / same title) */
-  async function jioTry(strict){
-    try{
-      tst('YouTube audio unavailable — getting the JioSaavn version…');
-      var lt=null; try{ lt=ytLyricTracks(t)[0]; }catch(e){} lt=lt||t;
-      var q=((lt.name||'')+' '+String(lt.artistName||'').split(',')[0]).trim();
-      var rr=await Api.searchSongs(q,0,8), arr=((rr.data&&rr.data.results)||[]).map(normalizeSong).filter(Boolean);
-      var d0=+t.duration||0, nz=function(x){ return String(x||'').toLowerCase().replace(/[^a-z0-9\u0900-\u097f]+/g,''); };
-      var pick=arr.find(function(x){ return d0&&x.duration&&Math.abs(x.duration-d0)<=20; });
-      if(!pick&&!strict) pick=arr[0];
-      if(!pick&&strict&&!d0){ var tn=nz(lt.name); pick=arr.find(function(x){ var n=nz(x.name); return tn&&n&&(tn.indexOf(n)>=0||n.indexOf(tn)>=0); }); }
-      if(!pick) return false;
-      var jc=jioUrls(pick), acj=new AbortController();
-      for(var q2=0;q2<jc.length;q2++){
-        try{ var ju=await jc[q2](); if(!ju) continue; var jr=await getBlob(ju,acj.signal); save(jr.b,jr.url); return true; }catch(e){}
-      }
-    }catch(e){}
-    return false;
-  }
+  /* NOTE: YouTube songs never fall back to JioSaavn - only the original YouTube audio is downloaded. */
   /* 1) BOOSTER server (/dl): the server fetches the ORIGINAL YouTube audio and hands it to us */
   var DS=window.BOOSTER_DL_SERVER;
   if(DS&&t.videoId&&!window.__boosterDown()){
@@ -4796,10 +4788,8 @@ async function download(c){
   });
   if(won){ try{ localStorage.setItem('bos_dl_win',new URL(won.url).origin); }catch(e){} }
   if(won){ save(won.b,won.url); return; }
-  if(await jioTry(true)) return;    /* only when no YouTube source could deliver: same song on JioSaavn */
-  if(await jioTry(false)) return;
   if(firstUrl){ window.open(firstUrl,'_blank','noopener'); tst('Opened the direct file - save it from the browser'); return; }
-  tst('Download failed. Try again in a moment','error');
+  tst('Could not download the YouTube audio — try again','error');
 }
 /* ---------- smart replace ---------- */
 async function smartReplace(c){
