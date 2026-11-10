@@ -5,7 +5,7 @@ window.__boosterDown=function(){return false;}; window.__boosterMarkDown=functio
    Put your server URL here (https://..., or http://localhost:8787 for testing), or run once in the browser console:
    localStorage.setItem('bos_ydl','https://your-server') */
 window.BOOSTER_YTDLP=(function(){
-  var DEFAULT_YDL='';
+  var DEFAULT_YDL='https://booster-ydl.onrender.com';
   var s=''; try{s=localStorage.getItem('bos_ydl')||''}catch(e){}
   s=String(s||DEFAULT_YDL).replace(/\/$/,'');
   return /^(https:\/\/|http:\/\/(localhost|127\.0\.0\.1)(:\d+)?(\/|$))/.test(s)?s:'';
