@@ -1,6 +1,15 @@
 /* BOOSTER boot: points the player at the server. Everything else lives on the server. */
 window.BOOSTER_SERVER=(function(){var s='';try{s=localStorage.getItem('bos_server')||''}catch(e){}return(s||'https://boostersever.raj-pawar091206.workers.dev').replace(/\/$/,'')})();
 window.__boosterDown=function(){return false;}; window.__boosterMarkDown=function(){};
+/* Optional yt-dlp audio server (see ydl_server/README.md). Leave empty to keep it OFF.
+   Put your server URL here (https://..., or http://localhost:8787 for testing), or run once in the browser console:
+   localStorage.setItem('bos_ydl','https://your-server') */
+window.BOOSTER_YTDLP=(function(){
+  var DEFAULT_YDL='';
+  var s=''; try{s=localStorage.getItem('bos_ydl')||''}catch(e){}
+  s=String(s||DEFAULT_YDL).replace(/\/$/,'');
+  return /^(https:\/\/|http:\/\/(localhost|127\.0\.0\.1)(:\d+)?(\/|$))/.test(s)?s:'';
+})();
 (function(){
   var S=window.BOOSTER_SERVER; if(!/^https:\/\//.test(S)){ window.BOOSTER_SERVER=''; return; }
   var __bd=0; window.__boosterDown=function(){return Date.now()<__bd;}; window.__boosterMarkDown=function(){__bd=Date.now()+60000;};

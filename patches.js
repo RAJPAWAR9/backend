@@ -1667,7 +1667,13 @@ window.__bosLyricFix={fixLine:fixLine,demoji:demoji};
   // ==== server music source ====
   var YTM_ENDPOINT = window.BOOSTER_SERVER || '';
   YTM_ENDPOINT = String(YTM_ENDPOINT).replace(/\/$/, '');
-  function srcUrl(h, id){ return h === 'ytm' ? YTM_ENDPOINT + '/ytm/stream?id=' + encodeURIComponent(id) : h + '/latest_version?id=' + encodeURIComponent(id) + '&itag=140&local=true'; }
+  // ==== optional yt-dlp server (BOOSTER_YTDLP in boot.js). Empty = this whole feature is off ====
+  var YDL_ENDPOINT = String(window.BOOSTER_YTDLP || '').replace(/\/$/, '');
+  var ydlDownUntil = 0;
+  function ydlUp(){ return !!YDL_ENDPOINT && Date.now() >= ydlDownUntil; }
+  function ydlDown(){ ydlDownUntil = Date.now() + 25000; }
+  function isSrv(h){ return h === 'ytm' || h === 'ydl'; }   // both stream with CORS, so EQ / visualizer work
+  function srcUrl(h, id){ return h === 'ydl' ? YDL_ENDPOINT + '/stream?id=' + encodeURIComponent(id) : h === 'ytm' ? YTM_ENDPOINT + '/ytm/stream?id=' + encodeURIComponent(id) : h + '/latest_version?id=' + encodeURIComponent(id) + '&itag=140&local=true'; }
   // ==== server (no server needed): public API that returns ready-to-play audio URLs ====
   var SRC_B = ['https://api.piped.private.coffee'];   /* only live Piped host; called directly (Worker IP gets 403) */
   var altCache = {};
@@ -1891,13 +1897,21 @@ window.__bosLyricFix={fixLine:fixLine,demoji:demoji};
     if (!YTM_ENDPOINT) return Promise.reject(0);
     return fetch(YTM_ENDPOINT + '/yt/search?q=' + enc(term)).then(function(r){ if (!r.ok) throw 0; return r.json(); }).then(function(l){ if (!Array.isArray(l) || !l.length) throw 0; return l; });
   }
+  function ydlSearch(term){
+    if (!ydlUp()) return Promise.reject(0);
+    var c = new AbortController(), tm = setTimeout(function(){ c.abort(); }, 8000);
+    return (window.__origFetch || fetch)(YDL_ENDPOINT + '/search?q=' + encodeURIComponent(term), { signal: c.signal })
+      .then(function(r){ clearTimeout(tm); if (!r.ok) throw 0; return r.json(); })
+      .then(function(l){ if (!Array.isArray(l) || !l.length) throw 0; return l; })
+      .catch(function(e){ clearTimeout(tm); throw e; });
+  }
   var vcache = {};
   function searchAll(term, type){
     type = type || 'video';
     if (type !== 'video') return searchInv(term, type);
     var key = String(term).toLowerCase(), hit = vcache[key];
     if (hit && Date.now() - hit.t < 300000) return Promise.resolve(hit.v);
-    var a = anyGood([ytWorkerSearch(term), searchInv(term, type), altVideoSearch(term)]).catch(function(){ return []; });
+    var a = anyGood([ytWorkerSearch(term), searchInv(term, type), altVideoSearch(term), ydlSearch(term)]).catch(function(){ return []; });
     var b = ytmWorkerSearch(term).catch(function(){ return []; });
     return new Promise(function(ok){
       var aDone = false;
@@ -2088,6 +2102,7 @@ window.__bosLyricFix={fixLine:fixLine,demoji:demoji};
     function raceHosts(id, ms){
       return new Promise(function(ok){
         var cand = [];
+        if (ydlUp()) cand.push('ydl');
         if (YTM_ENDPOINT && !window.__boosterDown()) cand.push('ytm');
         ranked().filter(function(x){ return !isCool(x); }).slice(0, 3).forEach(function(x){ cand.push(x); });
         if (!cand.length) return ok(null);
@@ -2100,14 +2115,15 @@ window.__bosLyricFix={fixLine:fixLine,demoji:demoji};
         tm = setTimeout(function(){ finish(null); }, ms);
         cand.forEach(function(h){
           var a = mkAudio(); a.id = 'yt-audio-race'; a.preload = 'auto'; a.volume = 0;
-          if (h === 'ytm') { try { a.crossOrigin = 'anonymous'; } catch (e) {} }
+          if (isSrv(h)) { try { a.crossOrigin = 'anonymous'; } catch (e) {} }
           var r = { id: id, a: a, host: h, bad: false }; els.push(r);
           a.addEventListener('loadedmetadata', function(){ finish(r); });
           a.addEventListener('error', function(){
-            if (h === 'ytm') { try { window.__boosterMarkDown(); } catch (e) {} } else markBad(h);
+            if (h === 'ytm') { try { window.__boosterMarkDown(); } catch (e) {} } else if (h === 'ydl') { if (!done) ydlDown(); } else markBad(h);
             r.bad = true; if (--left <= 0) finish(null);
           });
-          a.src = srcUrl(h, id); try { a.load(); } catch (e) {}
+          var go = function(){ if (done) return; a.src = srcUrl(h, id); try { a.load(); } catch (e) {} };
+          if (h === 'ytm' && cand.indexOf('ydl') >= 0) setTimeout(go, 1200); else go();   // yt-dlp gets a short head start; the Worker joins if it is slow
         });
       });
     }
@@ -2129,7 +2145,7 @@ window.__bosLyricFix={fixLine:fixLine,demoji:demoji};
     Y.next = function(){
       var tok = ++Y.tok;
       var ut = function(x){ return Y.tried.indexOf(x) < 0; };
-      var h = ((YTM_ENDPOINT && ut('ytm') && !window.__boosterDown()) ? 'ytm' : null) || ranked().filter(function(x){ return ut(x) && !isCool(x); })[0] || (ut('pp') ? 'pp' : null) || ranked().filter(ut)[0];   /* ORDER: 1) your Worker 2) server 3) server */
+      var h = ((ydlUp() && ut('ydl')) ? 'ydl' : null) || ((YTM_ENDPOINT && ut('ytm') && !window.__boosterDown()) ? 'ytm' : null) || ranked().filter(function(x){ return ut(x) && !isCool(x); })[0] || (ut('pp') ? 'pp' : null) || ranked().filter(ut)[0];   /* ORDER: 1) your Worker 2) server 3) server */
       if (!h) {
         // AUTO-RETRY: every source failed -> try the SAME song again (up to MAX_RETRY times) before giving up
         var MAX_RETRY = 1, sid = Y.id;
@@ -2159,17 +2175,17 @@ window.__bosLyricFix={fixLine:fixLine,demoji:demoji};
         }
         try { toast('No audio source is reachable right now. Set up the worker (YTM_ENDPOINT).', 'error'); } catch (e) {} Y.mode = 'iframe'; stopAudio(); Y.load(best(), Y.id, Y.base); return;   // last resort: YouTube player plays the same song
       }
-      Y.tried.push(h); if (h !== 'ytm' && h !== 'pp') Y.host = h;
+      Y.tried.push(h); if (h !== 'ytm' && h !== 'ydl' && h !== 'pp') Y.host = h;
       var pre = (Y.pre && Y.pre.id === Y.id && !Y.pre.bad && !(Y.base > 1)) ? Y.pre : null;
       if (pre) {   // the next song was already buffered in the background: use it, start is instant
         Y.pre = null; var oe = Y.au;
         if (oe && oe !== pre.a) { try { oe.pause(); oe.removeAttribute('src'); oe.load(); if (oe.remove) oe.remove(); } catch (e) {} }
-        Y.au = pre.a; h = pre.host; if (h !== 'ytm' && h !== 'pp') Y.host = h; Y.tried = [h];
+        Y.au = pre.a; h = pre.host; if (h !== 'ytm' && h !== 'ydl' && h !== 'pp') Y.host = h; Y.tried = [h];
       }
       Y.cur = h;
       var a = audio(), t0 = performance.now(), startAt = Y.base;
       /* an element already routed through the EQ must never get a non-CORS stream (Web Audio would output silence): use a fresh one */
-      if (h !== 'ytm' && a._fx) { try { a.pause(); a.removeAttribute('src'); a.remove(); } catch (e) {} Y.au = null; a = audio(); }
+      if (!isSrv(h) && a._fx) { try { a.pause(); a.removeAttribute('src'); a.remove(); } catch (e) {} Y.au = null; a = audio(); }
       clearTimeout(Y.wd); a._tok = tok;
       a.onloadedmetadata = function(){
         if (tok !== Y.tok) return;
@@ -2189,12 +2205,12 @@ window.__bosLyricFix={fixLine:fixLine,demoji:demoji};
             if (q && q.catch) q.catch(function(e){ if (tok === Y.tok && e && e.name === 'NotAllowedError') { Y.playing = false; setLoading(false); icons(); } });
           }, function(){ Y.fail(tok); });
         } else {
-          if (h === 'ytm') { try { a.crossOrigin = 'anonymous'; } catch (e) {} }   /* worker stream sends CORS headers, so EQ / normalize / visualizer can process it */
+          if (isSrv(h)) { try { a.crossOrigin = 'anonymous'; } catch (e) {} }   /* worker stream sends CORS headers, so EQ / normalize / visualizer can process it */
           a.src = srcUrl(h, Y.id);
         }
       }
       /* a pre-buffered / crossfaded element skipped this before, which is why YouTube songs had no Audio FX */
-      if (h === 'ytm') { try { a.crossOrigin = 'anonymous'; } catch (e) {} attachFX(a); }
+      if (isSrv(h)) { try { a.crossOrigin = 'anonymous'; } catch (e) {} attachFX(a); }
       a.volume = Y.xfIn ? 0 : Y.vol; a.muted = Y.muted; a.playbackRate = Y.rate;
       var p = (h === 'pp' && !pre) ? null : a.play();
       if (p && p.catch) p.catch(function(e){
@@ -2209,11 +2225,12 @@ window.__bosLyricFix={fixLine:fixLine,demoji:demoji};
         if ((a.readyState >= 1 || (a.buffered && a.buffered.length)) && el < 14000) { Y.wd = setTimeout(wdChk, 1500); return; }
         Y.fail(tok);
       };
-      Y.wd = setTimeout(wdChk, h === 'pp' ? 9000 : h === 'ytm' ? 3500 : 6000);
+      Y.wd = setTimeout(wdChk, (h === 'pp' || h === 'ydl') ? 9000 : h === 'ytm' ? 3500 : 6000);
     };
     Y.fail = function(tok){
       if (tok !== Y.tok || !Y.on || Y.mode !== 'audio') return;
       if (Y.cur === 'ytm') { try { window.__boosterMarkDown(); } catch (e) {} }
+      if (Y.cur === 'ydl') ydlDown();
       markBad(Y.cur || Y.host);
       var pos = Y.au && Y.au.currentTime; if (pos > 1) Y.base = pos;   // keep the position when a server drops mid-song
       Y.next();
@@ -2224,9 +2241,9 @@ window.__bosLyricFix={fixLine:fixLine,demoji:demoji};
     function killPre(){ var p = Y.pre; Y.pre = null; if (p && p.a) { try { p.a.pause(); p.a.removeAttribute('src'); p.a.load(); if (p.a.remove) p.a.remove(); } catch (e) {} } }
     function prep(t){
       var id = vidOf(t); if (!id || (Y.pre && Y.pre.id === id)) return;
-      killPre(); var hst = YTM_ENDPOINT ? 'ytm' : (ranked().filter(function(x){ return !isCool(x); })[0] || ranked()[0]); if (!hst) return;
+      killPre(); var hst = ydlUp() ? 'ydl' : YTM_ENDPOINT ? 'ytm' : (ranked().filter(function(x){ return !isCool(x); })[0] || ranked()[0]); if (!hst) return;
       var a = mkAudio(); a.id = 'yt-audio-pre'; a.preload = 'auto'; a.volume = 0;
-      if (hst === 'ytm') { try { a.crossOrigin = 'anonymous'; } catch (e) {} }
+      if (isSrv(hst)) { try { a.crossOrigin = 'anonymous'; } catch (e) {} }
       var rec = { id: id, a: a, host: hst, bad: false };
       a.addEventListener('error', function(){ rec.bad = true; });
       a.src = srcUrl(hst, id); try { a.load(); } catch (e) {}
@@ -2512,7 +2529,7 @@ window.__bosLyricFix={fixLine:fixLine,demoji:demoji};
   musicPlaylistSongs = function(id){ return bList('playlist', id).catch(function(){ return musicPlaylistSongs0(id); }); };
   window.BosYT = {
     search: searchAll,
-    audioSources: function(id){ var o=[]; if (YTM_ENDPOINT) o.push(function(){ return Promise.resolve(srcUrl('ytm', id)); }); ranked().forEach(function(h){ o.push(function(){ return Promise.resolve(srcUrl(h, id)); }); }); o.push(function(){ return altResolve(id); }); return o; },
+    audioSources: function(id){ var o=[]; if (ydlUp()) o.push(function(){ return Promise.resolve(srcUrl('ydl', id)); }); if (YTM_ENDPOINT) o.push(function(){ return Promise.resolve(srcUrl('ytm', id)); }); ranked().forEach(function(h){ o.push(function(){ return Promise.resolve(srcUrl(h, id)); }); }); o.push(function(){ return altResolve(id); }); return o; },
     musicSearch: musicSearch,
     musicPlaylists: musicPlaylists,
     musicPlaylistSongs: musicPlaylistSongs,
