@@ -1,4 +1,4 @@
-   (function(){
+(function(){
 "use strict";
 /* ============================================================
    BOOSTER OS — APPLICATION LOGIC (v2 — full audit rebuild)
@@ -1829,16 +1829,14 @@ window.lyricsSetSrc=lyricsSetSrc;
 function lyricsSourcePill(){
   const c=currentLyrics; if(!c) return "";
   const tag="BOOSTER"+(c.wordSynced?" · word-synced":c.estimated?" · auto-timed (approx)":c.synced===false?" · plain":" · line-synced");
- return '<div style="text-align:center;font-size:11px;opacity:.45;padding:28px 0 8px;letter-spacing:.04em">Lyrics: '+escapeHTML(tag)+' · <span style="text-decoration:underline;cursor:pointer" onclick="lyricsOpenManual()">wrong lyrics? add yours</span></div>';
+ return '<div style="text-align:center;font-size:11px;opacity:.45;padding:28px 0 0;letter-spacing:.04em">Lyrics: '+escapeHTML(tag)+' · <span style="text-decoration:underline;cursor:pointer" onclick="lyricsOpenManual()">wrong lyrics? add yours</span></div>'+lySrcSwitch();
 }
-function lySrcRefresh(){ const h=document.getElementById("ly-src"); if(h) h.innerHTML=lySrcSwitch(); }
-function renderLyricsPane(){ try{ renderLyricsPane0(); }finally{ lySrcRefresh(); } }
-function renderLyricsPane0(){
+function renderLyricsPane(){
   const el = document.getElementById("lyrics-scroll"); if(!el) return;
   const d = State.lyricsData;
   if(!d || d.status==="loading"){ el.innerHTML='<div class="empty-state"><div class="es-icon">'+svgClock()+'</div><div class="es-title">Loading lyrics…</div></div>'; return; }
   if(d.status==="error"){ el.innerHTML='<div class="error-state"><div class="es-icon">'+svgAlert()+'</div><div class="es-title">Lyrics unavailable</div><div class="es-desc">'+esc(d.message)+'</div></div>'; return; }
-  if(d.status==="empty"){ el.innerHTML='<div class="empty-state"><div class="es-icon">'+svgMusicEmpty()+'</div><div class="es-title">No lyrics found</div><div class="es-desc">We couldn\'t find lyrics for this track.</div><button class="btn btn-ghost mt-2" onclick="lyricsOpenManual()">Add lyrics manually</button></div>'; return; }
+  if(d.status==="empty"){ el.innerHTML='<div class="empty-state"><div class="es-icon">'+svgMusicEmpty()+'</div><div class="es-title">No lyrics found</div><div class="es-desc">We couldn\'t find lyrics for this track.</div><button class="btn btn-ghost mt-2" onclick="lyricsOpenManual()">Add lyrics manually</button>'+lySrcSwitch()+'</div>'; return; }
   if(currentLyrics && currentLyrics.lines && currentLyrics.lines.length){
     if(currentLyrics.synced && State.settings.syncedLyrics){
       el.innerHTML = currentLyrics.lines.map((l,i)=>renderLyricLine(l,i)).join("") + lyricsSourcePill();
