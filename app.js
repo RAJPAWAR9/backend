@@ -4678,18 +4678,19 @@ async function saveTrack(c,quiet){
   }
   async function blobOf(url,ms){
     var ac=new AbortController(), tm=setTimeout(function(){ try{ac.abort();}catch(e){} },ms);
-    try{ var r=await fetch(url,{signal:ac.signal}); if(!r.ok) throw 0; var b=await r.blob(); if(b.size<30000||/text|json|html/i.test(b.type)) throw 0; return b; }
+    try{ var r=await fetch(url,{signal:ac.signal}); if(!r.ok){ var m=''; try{ m=(await r.text()).slice(0,90); }catch(e){} throw new Error('HTTP '+r.status+' '+m); } var b=await r.blob(); if(b.size<30000||/text|json|html/i.test(b.type)){ var m2=''; try{ m2=(await b.text()).slice(0,90); }catch(e){} throw new Error('bad file '+b.size+'B '+m2); } return b; }
     finally{ clearTimeout(tm); }
   }
+  var lastErr=''; function fail(e){ lastErr=String(e&&e.message||e||'network/CORS blocked'); window.__dlErr=lastErr; }
   if(!quiet) tst('Downloading…');
   if(yt){
     var DS=window.BOOSTER_DL_SERVER;
-    if(DS&&t.videoId){ try{ save(await blobOf(DS+'/dl?id='+enc(t.videoId)+'&name='+enc(name)+'&dur='+(Math.round(+t.duration)||0),120000),''); return true; }catch(e){} }
-    if(!quiet) tst('Download failed. Try again in a moment','error'); return false;
+    if(DS&&t.videoId){ try{ save(await blobOf(DS+'/dl?id='+enc(t.videoId)+'&name='+enc(name)+'&dur='+(Math.round(+t.duration)||0),120000),''); return true; }catch(e){ fail(e); } } else fail('no server / video id');
+    if(!quiet) tst('Download failed: '+lastErr.slice(0,110),'error'); return false;
   }
   var cands=jioUrls(t);
-  for(var i=0;i<cands.length;i++){ try{ var u=await cands[i](); if(!u) continue; save(await blobOf(u,60000),u); return true; }catch(e){} }
-  if(!quiet){ try{ var u0=cands.length&&await cands[0](); if(u0){ window.open(u0,'_blank','noopener'); tst('Opened the direct file - save it from the browser'); return false; } }catch(e){} tst('Download failed. Try again in a moment','error'); }
+  for(var i=0;i<cands.length;i++){ try{ var u=await cands[i](); if(!u) continue; save(await blobOf(u,60000),u); return true; }catch(e){ fail(e); } }
+  if(!quiet){ try{ var u0=cands.length&&await cands[0](); if(u0){ window.open(u0,'_blank','noopener'); tst('Opened the direct file - save it from the browser'); return false; } }catch(e){} tst('Download failed: '+lastErr.slice(0,110),'error'); }
   return false;
 }
 function download(c){ return saveTrack(c,false); }
@@ -4711,7 +4712,7 @@ async function downloadMany(items){
     if(r) ok++; else bad++;
     await new Promise(function(f){ setTimeout(f,700); });
   }
-  bulk.run=false; pill(''); tst((bulk.stop?'Stopped: ':'Done: ')+ok+' downloaded'+(bad?', '+bad+' failed':''),(bad&&!ok)?'error':'');
+  bulk.run=false; pill(''); tst((bulk.stop?'Stopped: ':'Done: ')+ok+' downloaded'+(bad?', '+bad+' failed'+(window.__dlErr?' ('+window.__dlErr.slice(0,70)+')':''):''),(bad&&!ok)?'error':'');
 }
 function ctxItems(key){ return (ctxStore.get(key)||[]).map(function(t){ return (t&&(t.source==='youtube'||t.videoId))?{kind:'yt',track:t,v:{videoId:t.videoId}}:{kind:'jio',track:t}; }); }
 function ytItems(){ return (S()._ytRes||[]).map(function(v){ return {kind:'yt',v:v,track:ytTrackFrom(v)}; }); }
