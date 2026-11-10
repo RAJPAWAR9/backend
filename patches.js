@@ -2146,6 +2146,17 @@ window.__bosLyricFix={fixLine:fixLine,demoji:demoji};
           return;
         }
         Y.rt = 0;
+        if (Y.cycId !== sid || Date.now() - (Y.cycAt || 0) > 120000) { Y.cycId = sid; Y.cyc = 0; Y.cycAt = Date.now(); }
+        if (Y.cyc < 3) {   /* AUTO-REPLAY: after the error, the SAME song starts again by itself (max 3 times) */
+          if (Y.cyc++ === 0) { try { toast('No audio source is reachable right now. Retrying the same song…', 'error'); } catch (e) {} }
+          setLoading(true); clearTimeout(Y.rtT);
+          Y.rtT = setTimeout(function(){
+            if (!Y.on || Y.tok !== tok || Y.id !== sid || Y.mode !== 'audio' || !Y.playing) return;
+            try { SERVERS.forEach(function(sv){ rec(sv).until = 0; }); } catch (e) {}
+            Y.tried = []; Y.next();
+          }, 3000);
+          return;
+        }
         try { toast('No audio source is reachable right now. Set up the worker (YTM_ENDPOINT).', 'error'); } catch (e) {} Y.mode = 'iframe'; stopAudio(); Y.load(best(), Y.id, Y.base); return;   // last resort: YouTube player plays the same song
       }
       Y.tried.push(h); if (h !== 'ytm' && h !== 'pp') Y.host = h;
