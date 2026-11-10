@@ -1799,7 +1799,7 @@ const LY_CAP=new Map();
 function lyCapPref(){ try{ return localStorage.getItem("bos_ly_src")==="caption"; }catch(e){ return false; } }
 function lyIsYt(t){ return !!(t&&(t.source==="youtube"||t.videoId)); }
 async function lyCaption(track,sig){
-  const S=window.BOOSTER_SERVER; if(!S) return null;
+  const S=window.BOOSTER_SERVER, YD=window.BOOSTER_YTDLP; if(!S&&!YD) return null;
   let id=track.videoId||(String(track.id||"").indexOf("yt_")===0?String(track.id).slice(3):"");
   if(!id){   /* JioSaavn song: find the same song on YouTube, then use its caption */
     const mk="j:"+track.id; id=LY_CAP.get(mk);
@@ -1807,6 +1807,13 @@ async function lyCaption(track,sig){
   }
   if(!id||!/^[\w-]{11}$/.test(id)) return null;
   if(LY_CAP.has(id)) return LY_CAP.get(id);
+  if(YD){   /* yt-dlp server first (the Worker is often blocked by YouTube) */
+    try{
+      const r0=await (window.__origFetch||fetch)(YD+"/ycap?id="+id,{signal:sig});
+      if(r0.ok){ const l0=lyCapClean(await r0.json()); if(l0.length>=3){ const d0={synced:true,estimated:false,source:"YOUTUBE CAPTION",lines:l0}; LY_CAP.set(id,d0); return d0; } }
+    }catch(e){ if(sig&&sig.aborted) return null; }
+  }
+  if(!S) return null;
   try{
     const r=await (window.__origFetch||fetch)(S+"/ycap?id="+id,{signal:sig}); if(!r.ok) return null;
     const l=lyCapClean(await r.json()); if(l.length<3) return null;
@@ -4686,9 +4693,10 @@ async function saveTrack(c,quiet){
   if(yt){
     var DS=window.BOOSTER_DL_SERVER, YD=window.BOOSTER_YTDLP;
     /* yt-dlp server first (when set): its answer never goes through the Worker /p proxy */
-    if(YD&&t.videoId){ try{ save(await blobOf(YD+'/stream?id='+enc(t.videoId),120000,true),''); return true; }catch(e){ fail(e); } }
+    var ydErr='';
+    if(YD&&t.videoId){ try{ save(await blobOf(YD+'/stream?id='+enc(t.videoId),120000,true),''); return true; }catch(e){ ydErr=String(e&&e.message||e||'network/CORS blocked'); window.__ydErr=ydErr; fail(e); } }
     if(DS&&t.videoId){ try{ save(await blobOf(DS+'/dl?id='+enc(t.videoId)+'&name='+enc(name)+'&dur='+(Math.round(+t.duration)||0),120000),''); return true; }catch(e){ fail(e); } } else fail('no server / video id');
-    if(!quiet) tst('Download failed: '+lastErr.slice(0,110),'error'); return false;
+    if(!quiet) tst('Download failed: '+(YD?('[yt-dlp: '+(ydErr||'?').slice(0,70)+'] '):'[yt-dlp OFF] ')+lastErr.slice(0,90),'error'); return false;
   }
   var cands=jioUrls(t);
   for(var i=0;i<cands.length;i++){ try{ var u=await cands[i](); if(!u) continue; save(await blobOf(u,40000),u); return true; }catch(e){ fail(e); } }
