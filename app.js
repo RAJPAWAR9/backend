@@ -4676,15 +4676,17 @@ async function saveTrack(c,quiet){
     setTimeout(function(){ try{URL.revokeObjectURL(a.href);}catch(e){} a.remove(); },8000);
     if(!quiet) tst('Downloaded: '+t.name);
   }
-  async function blobOf(url,ms){
+  async function blobOf(url,ms,raw){
     var ac=new AbortController(), tm=setTimeout(function(){ try{ac.abort();}catch(e){} },ms);
-    try{ var r=await fetch(url,{signal:ac.signal}); if(!r.ok){ var m=''; try{ m=(await r.text()).slice(0,90); }catch(e){} throw new Error('HTTP '+r.status+' '+m); } var b=await r.blob(); if(b.size<30000||/text|json|html/i.test(b.type)){ var m2=''; try{ m2=(await b.text()).slice(0,90); }catch(e){} throw new Error('bad file '+b.size+'B '+m2); } return b; }
+    try{ var r=await (raw&&window.__origFetch?window.__origFetch:fetch)(url,{signal:ac.signal}); if(!r.ok){ var m=''; try{ m=(await r.text()).slice(0,90); }catch(e){} throw new Error('HTTP '+r.status+' '+m); } var b=await r.blob(); if(b.size<30000||/text|json|html/i.test(b.type)){ var m2=''; try{ m2=(await b.text()).slice(0,90); }catch(e){} throw new Error('bad file '+b.size+'B '+m2); } return b; }
     finally{ clearTimeout(tm); }
   }
   var lastErr=''; function fail(e){ lastErr=String(e&&e.message||e||'network/CORS blocked'); window.__dlErr=lastErr; }
   if(!quiet) tst('Downloading…');
   if(yt){
-    var DS=window.BOOSTER_DL_SERVER;
+    var DS=window.BOOSTER_DL_SERVER, YD=window.BOOSTER_YTDLP;
+    /* yt-dlp server first (when set): its answer never goes through the Worker /p proxy */
+    if(YD&&t.videoId){ try{ save(await blobOf(YD+'/stream?id='+enc(t.videoId),120000,true),''); return true; }catch(e){ fail(e); } }
     if(DS&&t.videoId){ try{ save(await blobOf(DS+'/dl?id='+enc(t.videoId)+'&name='+enc(name)+'&dur='+(Math.round(+t.duration)||0),120000),''); return true; }catch(e){ fail(e); } } else fail('no server / video id');
     if(!quiet) tst('Download failed: '+lastErr.slice(0,110),'error'); return false;
   }
