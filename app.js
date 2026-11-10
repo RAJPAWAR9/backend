@@ -4689,7 +4689,7 @@ async function saveTrack(c,quiet){
     if(!quiet) tst('Download failed: '+lastErr.slice(0,110),'error'); return false;
   }
   var cands=jioUrls(t);
-  for(var i=0;i<cands.length;i++){ try{ var u=await cands[i](); if(!u) continue; save(await blobOf(u,60000),u); return true; }catch(e){ fail(e); } }
+  for(var i=0;i<cands.length;i++){ try{ var u=await cands[i](); if(!u) continue; save(await blobOf(u,40000),u); return true; }catch(e){ fail(e); } }
   if(!quiet){ try{ var u0=cands.length&&await cands[0](); if(u0){ window.open(u0,'_blank','noopener'); tst('Opened the direct file - save it from the browser'); return false; } }catch(e){} tst('Download failed: '+lastErr.slice(0,110),'error'); }
   return false;
 }
@@ -4705,13 +4705,17 @@ async function downloadMany(items){
   if(bulk.run){ tst('A bulk download is already running'); return; }
   items=(items||[]).filter(function(c){return c&&c.track;}); if(!items.length){ tst('Nothing to download','error'); return; }
   if(items.length>1&&!confirm('Download '+items.length+' songs one by one?')) return;
-  bulk.run=true; bulk.stop=false; var ok=0,bad=0;
-  for(var i=0;i<items.length&&!bulk.stop;i++){
-    pill('Downloading '+(i+1)+'/'+items.length+': '+(items[i].track.name||'')+'  (ok '+ok+(bad?', failed '+bad:'')+')');
-    var r=false; try{ r=await saveTrack(items[i],true); }catch(e){}
-    if(r) ok++; else bad++;
-    await new Promise(function(f){ setTimeout(f,700); });
+  bulk.run=true; bulk.stop=false; var ok=0,bad=0,idx=0,n=items.length;
+  async function lane(){
+    while(!bulk.stop){
+      var i=idx++; if(i>=n) return;
+      pill('Downloading '+(ok+bad+1)+'/'+n+': '+(items[i].track.name||'')+'  (ok '+ok+(bad?', failed '+bad:'')+')');
+      var r=false; try{ r=await saveTrack(items[i],true); }catch(e){}
+      if(r) ok++; else bad++;
+    }
   }
+  var lanes=[]; for(var k=0;k<Math.min(3,n);k++){ lanes.push(lane()); await new Promise(function(f){ setTimeout(f,350); }); }
+  await Promise.all(lanes);
   bulk.run=false; pill(''); tst((bulk.stop?'Stopped: ':'Done: ')+ok+' downloaded'+(bad?', '+bad+' failed'+(window.__dlErr?' ('+window.__dlErr.slice(0,70)+')':''):''),(bad&&!ok)?'error':'');
 }
 function ctxItems(key){ return (ctxStore.get(key)||[]).map(function(t){ return (t&&(t.source==='youtube'||t.videoId))?{kind:'yt',track:t,v:{videoId:t.videoId}}:{kind:'jio',track:t}; }); }
